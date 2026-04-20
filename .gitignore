@@ -1,0 +1,60 @@
+# Dependências
+node_modules/
+.pnpm-store/
+
+# Builds e Saídas
+dist/
+.next/
+out/
+build/
+*.tsbuildinfo
+
+# Variáveis de Ambiente (Segurança!)
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+
+# Expo / Mobile
+.expo/
+*.jks
+*.p12
+*.key
+*.mobileprovision
+
+# IDEs e Editores
+.vscode/*
+!.vscode/extensions.json
+.idea/
+*.swp
+*.swo
+.DS_Store
+
+# Logs
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Prisma
+/prisma/generated/
+
+# Testes
+/coverage
+
+# Temporários
+.vercel
+.turbo
+
+# TypeScript
+tsconfig.tsbuildinfo
+
+# Ngrok
+ngrok.log
+
+# Uploads locais (se houver)
+apps/admin-panel/public/uploads/
+apps/api/uploads/

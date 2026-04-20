@@ -1,0 +1,18 @@
+{
+  "name": "Inturb Driver",
+  "short_name": "Inturb",
+  "description": "Aplicativo web do motorista para receber e aceitar corridas.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#f3f7f4",
+  "theme_color": "#14734a",
+  "icons": [
+    {
+      "src": "/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}

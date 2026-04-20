@@ -1,0 +1,32 @@
+{
+  "expo": {
+    "name": "Inturb Driver",
+    "slug": "driver-app-mobile",
+    "scheme": "inturb-driver",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "light",
+    "plugins": [
+      "expo-router",
+      "expo-notifications",
+      [
+        "expo-location",
+        {
+          "locationWhenInUsePermission": "Permita o acesso a localizacao para detectar a chegada ao ponto de embarque."
+        }
+      ],
+      [
+        "expo-splash-screen",
+        {
+          "backgroundColor": "#6b4eeb"
+        }
+      ]
+    ],
+    "experiments": {
+      "typedRoutes": true
+    },
+    "web": {
+      "bundler": "metro"
+    }
+  }
+}

@@ -1,0 +1,758 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum UserRole {
+  ADMIN
+  OPERATOR
+  DRIVER
+}
+
+enum UserGender {
+  FEMALE
+  MALE
+  NON_BINARY
+  PREFER_NOT_TO_SAY
+}
+
+enum RideStatus {
+  NEW
+  QUOTED
+  PREBOOKED
+  ACCEPTED
+  COMPLETED
+  REJECTED
+  EXPIRED
+  CANCELLED
+}
+
+enum MessageDirection {
+  INBOUND
+  OUTBOUND
+}
+
+enum MessageType {
+  TEXT
+  AUDIO
+  IMAGE
+  TEMPLATE
+}
+
+enum DriverDecisionType {
+  ACCEPT
+  REJECT
+}
+
+enum DriverRideStage {
+  SCHEDULED
+  EN_ROUTE_PICKUP
+  ARRIVED
+  IN_PROGRESS
+  COMPLETED
+}
+
+model User {
+  id           String        @id @default(cuid())
+  role         UserRole
+  cpf          String?
+  phone        String?       @unique
+  email        String?
+  passwordHash String?
+  isActive     Boolean       @default(true)
+  name         String
+  birthDate    DateTime?
+  gender       UserGender?
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+
+  driver   Driver?
+  sessions UserSession[]
+}
+
+model UserSession {
+  id        String   @id @default(cuid())
+  userId    String
+  tokenHash String   @unique
+  expiresAt DateTime
+  revokedAt DateTime?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+model Customer {
+  id                 String   @id @default(cuid())
+  phone              String   @unique
+  name               String
+  hasReducedMobility Boolean?
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  favoriteAddresses CustomerFavoriteAddress[]
+}
+
+model CustomerFavoriteAddress {
+  id         String   @id @default(cuid())
+  customerId String
+  label      String
+  labelKey   String
+  address    String
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  customer Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+
+  @@unique([customerId, labelKey])
+  @@index([customerId])
+}
+
+model TripType {
+  id              String   @id @default(cuid())
+  slug            String   @unique
+  name            String
+  description     String?
+  surchargeAmount Decimal  @default(0) @db.Decimal(10, 2)
+  isActive        Boolean  @default(true)
+  isDefault       Boolean  @default(false)
+  sortOrder       Int      @default(0)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+}
+
+model PricingConfig {
+  id                 String   @id @default(cuid())
+  currency           String   @default("BRL")
+  baseFare           Decimal  @default(6) @db.Decimal(10, 2)
+  distanceRatePerKm  Decimal  @default(2.1) @db.Decimal(10, 2)
+  timeRatePerMinute  Decimal  @default(0.35) @db.Decimal(10, 2)
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+}
+
+enum DriverCompensationModel {
+  PERCENT
+  FLAT
+  DAILY
+  SHIFT
+  SALARY
+  INTERMITTENT
+  CUSTOM
+}
+
+enum RemunerationTemplateWorkerType {
+  DRIVER
+}
+
+enum BenefitType {
+  FIXED
+  PERCENTAGE
+  VARIABLE
+  INFORMATIVE
+}
+
+enum BenefitFrequency {
+  MONTHLY
+  DAILY
+  PER_USE
+  PER_TRIP
+  ONE_TIME
+}
+
+enum BenefitApplicationMode {
+  PER_EMPLOYEE
+  PER_DAY_WORKED
+  PER_TRIP
+}
+
+enum WorkProfileContractType {
+  CLT
+  CLT_INTERMITENTE
+  MEI
+  PJ
+  AUTONOMO
+}
+
+enum DriverType {
+  AGREGADO
+  FROTA
+}
+
+enum FleetAssignmentMode {
+  FIXED
+  FLEX
+}
+
+enum DriverOperationalStatus {
+  ACTIVE
+  INACTIVE
+  LEAVE
+  SUSPENDED
+}
+
+enum FleetVehicleStatus {
+  AVAILABLE
+  ALLOCATED
+  MAINTENANCE
+  INACTIVE
+}
+
+enum FleetVehicleAssignmentValidationMethod {
+  QR_CODE
+  PLATE
+  ADMIN
+}
+
+enum FleetMaintenanceTaskStatus {
+  OPEN
+  IN_PROGRESS
+  COMPLETED
+  CANCELLED
+}
+
+enum FleetMaintenanceTaskType {
+  GENERAL
+  PREVENTIVE
+  CORRECTIVE
+  ALIGNMENT
+  BALANCING
+  OIL_CHANGE
+  TIRE
+  INSPECTION
+  CLEANING
+  BODYWORK
+}
+
+enum FleetMaintenanceTaskPriority {
+  LOW
+  MEDIUM
+  HIGH
+  CRITICAL
+}
+
+enum FleetChecklistRoutine {
+  START_OF_DAY
+  END_OF_DAY
+}
+
+enum FleetChecklistInputType {
+  BOOLEAN
+  ODOMETER
+  TEXT
+  SELECT
+  NUMBER
+  PHOTO
+}
+
+enum FleetChecklistTaskActionType {
+  NONE
+  REQUIRE_PHOTO
+  OPEN_MAINTENANCE
+  OPEN_SUPPORT_TICKET
+  REQUIRE_NOTE
+  REQUIRE_NUMBER
+}
+
+model DriverCompensationConfig {
+  id           String                  @id @default(cuid())
+  model        DriverCompensationModel @default(PERCENT)
+  defaultValue Decimal                 @default(0) @db.Decimal(10, 2)
+  isActive     Boolean                 @default(false)
+  notes        String?
+  createdAt    DateTime                @default(now())
+  updatedAt    DateTime                @updatedAt
+}
+
+model RemunerationTemplate {
+  id              String                         @id @default(cuid())
+  name            String
+  description     String?
+  workerType      RemunerationTemplateWorkerType @default(DRIVER)
+  contractProfile String?
+  isActive        Boolean                        @default(true)
+  settings        Json
+  createdAt       DateTime                       @default(now())
+  updatedAt       DateTime                       @updatedAt
+
+  @@index([workerType, isActive, createdAt])
+}
+
+model OvertimeTemplate {
+  id           String   @id @default(cuid())
+  name         String
+  description  String?
+  isActive     Boolean  @default(true)
+  workProfiles Json?
+  settings     Json
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@index([isActive, updatedAt])
+}
+
+model BenefitTemplate {
+  id                 String                 @id @default(cuid())
+  name               String
+  description        String?
+  isActive           Boolean                @default(true)
+  type               BenefitType
+  frequency          BenefitFrequency
+  applicationMode    BenefitApplicationMode
+  valueConfig        Json
+  deductFromSalary   Boolean                @default(false)
+  incursCharges      Boolean                @default(false)
+  isMandatory        Boolean                @default(false)
+  editableInContract Boolean                @default(true)
+  workProfiles       Json?
+  contractProfiles   Json?
+  createdAt          DateTime               @default(now())
+  updatedAt          DateTime               @updatedAt
+
+  @@index([isActive, type, updatedAt])
+}
+
+model WorkProfileTemplate {
+  id                         String                  @id @default(cuid())
+  name                       String
+  description                String?
+  isActive                   Boolean                 @default(true)
+  cargoName                  String
+  cargoLevel                 String?
+  contractType               WorkProfileContractType
+  journeyTemplateId          String?
+  journeyTemplateName        String?
+  journeySummary             String?
+  remuneration               Json
+  usesOvertime               Boolean                 @default(true)
+  overtimeTemplateId         String?
+  overtimeTemplateName       String?
+  overtimeSummary            String?
+  benefits                   Json?
+  allowContractEditing       Boolean                 @default(true)
+  allowJourneyCustomization  Boolean                 @default(true)
+  allowBenefitsCustomization Boolean                 @default(true)
+  createdAt                  DateTime                @default(now())
+  updatedAt                  DateTime                @updatedAt
+
+  @@index([isActive, updatedAt])
+}
+
+model CompanyProfileConfig {
+  id                         String   @id @default(cuid())
+  legalName                  String   @default("Inturb Plataforma de Mobilidade LTDA")
+  tradeName                  String   @default("Inturb")
+  cnpj                       String?
+  phone                      String?
+  email                      String   @default("operacao@inturb.local")
+  website                    String?
+  zipCode                    String?
+  street                     String?
+  number                     String?
+  neighborhood               String?
+  city                       String?
+  state                      String?
+  legalRepresentativeName    String?
+  legalRepresentativeCpf     String?
+  legalRepresentativeRole    String?
+  contractSignatureCity      String?
+  createdAt                  DateTime @default(now())
+  updatedAt                  DateTime @updatedAt
+}
+
+enum PricingRuleScheduleType {
+  WEEKLY_WINDOW
+  DATE_RANGE
+}
+
+enum PricingRuleAdjustmentType {
+  FLAT
+  PERCENT
+}
+
+model PricingRule {
+  id              String                    @id @default(cuid())
+  name            String
+  description     String?
+  scheduleType    PricingRuleScheduleType
+  adjustmentType  PricingRuleAdjustmentType @default(FLAT)
+  adjustmentValue Decimal                   @default(0) @db.Decimal(10, 2)
+  isActive        Boolean                   @default(true)
+  priority        Int                       @default(100)
+  daysOfWeek      String?
+  startMinutes    Int?
+  endMinutes      Int?
+  startDate       DateTime?
+  endDate         DateTime?
+  createdAt       DateTime                  @default(now())
+  updatedAt       DateTime                  @updatedAt
+}
+
+model ConversationSession {
+  id            String   @id @default(cuid())
+  channel       String   @default("WEB_SIMULATOR")
+  customerPhone String?
+  currentStep   String
+  latestRideId  String?
+  state         Json
+  messages      Json
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@index([customerPhone, updatedAt])
+}
+
+model Driver {
+  id                    String                  @id @default(cuid())
+  userId                String                  @unique
+  vehicle               String?
+  isActive              Boolean                 @default(true)
+  photoUrl              String?
+  bloodType             String?
+  emergencyContacts     Json?
+  address               Json?
+  driverLicense         Json?
+  toxicology            Json?
+  complianceHistory     Json?
+  contractProfile       String?
+  journey               Json?
+  contract              Json?
+  authorizedCategories  Json?
+  driverType            DriverType              @default(AGREGADO)
+  fleetAssignmentMode   FleetAssignmentMode?
+  defaultFleetVehicleId String?
+  operationalStatus     DriverOperationalStatus @default(ACTIVE)
+  operationalNotes      String?
+  useGlobalCompensation Boolean                 @default(true)
+  compensationModel     DriverCompensationModel?
+  compensationValue     Decimal?                @db.Decimal(10, 2)
+  compensationNotes     String?
+  createdAt             DateTime                @default(now())
+  updatedAt             DateTime                @updatedAt
+
+  user          User                 @relation(fields: [userId], references: [id])
+  assignedRides Ride[]               @relation("RideAssignedDriver")
+  decisions     DriverRideDecision[]
+  pushSubscriptions DriverPushSubscription[]
+  expoPushTokens DriverExpoPushToken[]
+  vehicles      Vehicle[]
+  fleetAssignments FleetVehicleAssignment[]
+  defaultFleetVehicle FleetVehicle? @relation("DriverDefaultFleetVehicle", fields: [defaultFleetVehicleId], references: [id])
+
+  @@index([defaultFleetVehicleId])
+}
+
+model Vehicle {
+  id        String   @id @default(cuid())
+  driverId  String
+  label     String
+  plate     String
+  color     String?
+  year      Int?
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  driver Driver @relation(fields: [driverId], references: [id])
+
+  @@unique([driverId, plate])
+  @@index([driverId, isActive])
+}
+
+model FleetVehicle {
+  id          String             @id @default(cuid())
+  label       String
+  plate       String             @unique
+  checkinCode String             @unique @default(cuid())
+  color       String?
+  year        Int?
+  status      FleetVehicleStatus @default(AVAILABLE)
+  notes       String?
+  createdAt   DateTime           @default(now())
+  updatedAt   DateTime           @updatedAt
+
+  assignments FleetVehicleAssignment[]
+  checklistEntries FleetVehicleChecklistEntry[]
+  maintenancePlans FleetVehicleMaintenancePlan[]
+  maintenanceTasks FleetVehicleMaintenanceTask[]
+  odometerLogs FleetVehicleOdometerLog[]
+  defaultDrivers Driver[] @relation("DriverDefaultFleetVehicle")
+
+  @@index([status, createdAt])
+}
+
+model FleetVehicleAssignment {
+  id             String      @id @default(cuid())
+  fleetVehicleId String
+  driverId       String
+  validationMethod FleetVehicleAssignmentValidationMethod @default(ADMIN)
+  startedAt      DateTime    @default(now())
+  endedAt        DateTime?
+  notes          String?
+  createdAt      DateTime    @default(now())
+  updatedAt      DateTime    @updatedAt
+
+  fleetVehicle FleetVehicle @relation(fields: [fleetVehicleId], references: [id])
+  driver       Driver       @relation(fields: [driverId], references: [id])
+
+  @@index([fleetVehicleId, endedAt, startedAt])
+  @@index([driverId, endedAt, startedAt])
+}
+
+model FleetVehicleChecklistEntry {
+  id             String   @id @default(cuid())
+  fleetVehicleId String
+  dateKey        String
+  itemKey        String
+  templateId     String?
+  templateName   String?
+  label          String
+  description    String?
+  category       String?
+  routine        FleetChecklistRoutine @default(START_OF_DAY)
+  inputType      FleetChecklistInputType @default(BOOLEAN)
+  actionType     FleetChecklistTaskActionType @default(NONE)
+  sortOrder      Int @default(0)
+  isRequired     Boolean @default(true)
+  isChecked      Boolean  @default(false)
+  numericValue   Int?
+  textValue      String?
+  selectedOption String?
+  checkedAt      DateTime?
+  notes          String?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  fleetVehicle FleetVehicle @relation(fields: [fleetVehicleId], references: [id], onDelete: Cascade)
+
+  @@unique([fleetVehicleId, dateKey, itemKey])
+  @@index([fleetVehicleId, dateKey])
+}
+
+model FleetChecklistTemplate {
+  id        String                 @id @default(cuid())
+  name      String
+  category  String
+  routine   FleetChecklistRoutine  @default(START_OF_DAY)
+  isActive  Boolean                @default(true)
+  createdAt DateTime               @default(now())
+  updatedAt DateTime               @updatedAt
+
+  items FleetChecklistTemplateItem[]
+
+  @@index([routine, isActive, createdAt])
+}
+
+model FleetChecklistTemplateItem {
+  id            String                      @id @default(cuid())
+  templateId    String
+  itemKey       String                      @unique
+  label         String
+  description   String?
+  inputType     FleetChecklistInputType     @default(BOOLEAN)
+  actionType    FleetChecklistTaskActionType @default(NONE)
+  selectOptions Json?
+  builderConfig Json?
+  sortOrder     Int                         @default(0)
+  isRequired    Boolean                     @default(true)
+  isActive      Boolean                     @default(true)
+  createdAt     DateTime                    @default(now())
+  updatedAt     DateTime                    @updatedAt
+
+  template FleetChecklistTemplate @relation(fields: [templateId], references: [id], onDelete: Cascade)
+
+  @@index([templateId, isActive, sortOrder])
+}
+
+model FleetVehicleMaintenancePlan {
+  id                   String                       @id @default(cuid())
+  fleetVehicleId       String
+  title                String
+  description          String?
+  serviceType          FleetMaintenanceTaskType     @default(PREVENTIVE)
+  priority             FleetMaintenanceTaskPriority @default(MEDIUM)
+  workshop             String?
+  intervalMonths       Int?
+  intervalKm           Int?
+  firstDueAt           DateTime?
+  firstDueKm           Int?
+  defaultEstimatedCost Decimal?                     @db.Decimal(10, 2)
+  notes                String?
+  isActive             Boolean                      @default(true)
+  createdAt            DateTime                     @default(now())
+  updatedAt            DateTime                     @updatedAt
+
+  fleetVehicle FleetVehicle @relation(fields: [fleetVehicleId], references: [id], onDelete: Cascade)
+  tasks        FleetVehicleMaintenanceTask[]
+
+  @@index([fleetVehicleId, isActive, createdAt])
+}
+
+model FleetVehicleMaintenanceTask {
+  id                String                      @id @default(cuid())
+  fleetVehicleId    String
+  maintenancePlanId String?
+  title             String
+  description       String?
+  serviceType       FleetMaintenanceTaskType    @default(GENERAL)
+  priority          FleetMaintenanceTaskPriority @default(MEDIUM)
+  workshop          String?
+  dueAt             DateTime?
+  dueKm             Int?
+  recurrenceMonths  Int?
+  recurrenceKm      Int?
+  currentOdometerKm Int?
+  estimatedCost     Decimal?                    @db.Decimal(10, 2)
+  actualCost        Decimal?                    @db.Decimal(10, 2)
+  openedAt          DateTime                    @default(now())
+  startedAt         DateTime?
+  status            FleetMaintenanceTaskStatus  @default(OPEN)
+  completedAt       DateTime?
+  notes             String?
+  createdAt         DateTime                    @default(now())
+  updatedAt         DateTime                    @updatedAt
+
+  fleetVehicle FleetVehicle                 @relation(fields: [fleetVehicleId], references: [id], onDelete: Cascade)
+  maintenancePlan FleetVehicleMaintenancePlan? @relation(fields: [maintenancePlanId], references: [id], onDelete: SetNull)
+
+  @@index([fleetVehicleId, status, createdAt])
+  @@index([maintenancePlanId, status, createdAt])
+}
+
+model FleetVehicleOdometerLog {
+  id             String   @id @default(cuid())
+  fleetVehicleId String
+  odometerKm     Int
+  recordedAt     DateTime @default(now())
+  notes          String?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  fleetVehicle FleetVehicle @relation(fields: [fleetVehicleId], references: [id], onDelete: Cascade)
+
+  @@index([fleetVehicleId, recordedAt])
+}
+
+model Ride {
+  id               String     @id @default(cuid())
+  customerName     String     @default("Cliente nao informado")
+  customerPhone    String
+  tripTypeSlug     String?
+  tripTypeName     String?
+  tripTypeSurchargeAmount Decimal? @db.Decimal(10, 2)
+  baggageCount     Int?
+  baggageSize      String?
+  petType          String?
+  petSize          String?
+  customerHasReducedMobility Boolean?
+  companionNeedsSpecialAttention Boolean?
+  companionSpecialAttentionDetails String?
+  passengerCount   Int?
+  hasIntermediateStops Boolean? 
+  intermediateStopsSummary String?
+  origin           String
+  destination      String
+  scheduledAt      DateTime
+  status           RideStatus
+  quoteAmount      Decimal?   @db.Decimal(10, 2)
+  quoteCurrency    String?
+  routeDistanceKm  Decimal?   @db.Decimal(10, 2)
+  routeDurationMin Int?
+  assignedDriverId String?
+  driverStage      DriverRideStage?
+  pickupCode       String?
+  pickupCodeVerifiedAt DateTime?
+  navigationStartedAt DateTime?
+  arrivedAt        DateTime?
+  startedAt        DateTime?
+  completedAt      DateTime?
+  createdAt        DateTime   @default(now())
+  updatedAt        DateTime   @updatedAt
+
+  assignedDriver Driver?              @relation("RideAssignedDriver", fields: [assignedDriverId], references: [id])
+  quotes         Quote[]
+  messages       Message[]
+  events         RideEvent[]
+  decisions      DriverRideDecision[]
+}
+
+model Quote {
+  id               String   @id @default(cuid())
+  rideId           String
+  amount           Decimal  @db.Decimal(10, 2)
+  currency         String
+  routeDistanceKm  Decimal  @db.Decimal(10, 2)
+  routeDurationMin Int
+  createdAt        DateTime @default(now())
+
+  ride Ride @relation(fields: [rideId], references: [id])
+}
+
+model Message {
+  id                String           @id @default(cuid())
+  rideId            String?
+  customerPhone     String
+  direction         MessageDirection
+  messageType       MessageType
+  content           String?
+  providerMessageId String?          @unique
+  metadata          Json?
+  createdAt         DateTime         @default(now())
+
+  ride Ride? @relation(fields: [rideId], references: [id])
+}
+
+model RideEvent {
+  id        String   @id @default(cuid())
+  rideId    String
+  eventType String
+  payload   Json?
+  createdAt DateTime @default(now())
+
+  ride Ride @relation(fields: [rideId], references: [id])
+}
+
+model DriverRideDecision {
+  id        String             @id @default(cuid())
+  rideId    String
+  driverId  String
+  decision  DriverDecisionType
+  createdAt DateTime           @default(now())
+
+  ride   Ride   @relation(fields: [rideId], references: [id])
+  driver Driver @relation(fields: [driverId], references: [id])
+
+  @@index([rideId, driverId])
+}
+
+model DriverPushSubscription {
+  id        String   @id @default(cuid())
+  driverId  String
+  endpoint  String   @unique
+  p256dh    String
+  auth      String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  driver Driver @relation(fields: [driverId], references: [id], onDelete: Cascade)
+
+  @@index([driverId])
+}
+
+model DriverExpoPushToken {
+  id        String   @id @default(cuid())
+  driverId  String
+  token     String   @unique
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  driver Driver @relation(fields: [driverId], references: [id], onDelete: Cascade)
+
+  @@index([driverId])
+}

@@ -1,0 +1,17 @@
+version: 3
+tunnels:
+  api:
+    proto: http
+    addr: 3000
+  site:
+    proto: http
+    addr: 3004
+  passenger-app:
+    proto: http
+    addr: 3002
+  driver-app:
+    proto: http
+    addr: 3003
+  app-mobile:
+    proto: http
+    addr: 8081

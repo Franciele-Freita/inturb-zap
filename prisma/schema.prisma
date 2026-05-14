@@ -72,6 +72,13 @@ model User {
 
   driver   Driver?
   sessions UserSession[]
+  createdTimeEntries    TimeEntry[]             @relation("TimeEntryCreatedBy")
+  updatedTimeEntries    TimeEntry[]             @relation("TimeEntryUpdatedBy")
+  requestedTimeAdjustments TimeAdjustmentRequest[] @relation("TimeAdjustmentRequestedBy")
+  updatedTimeAdjustments   TimeAdjustmentRequest[] @relation("TimeAdjustmentUpdatedBy")
+  reviewedTimeAdjustments TimeAdjustmentRequest[] @relation("TimeAdjustmentReviewedBy")
+  createdFinancialManualTransactions FinancialManualTransaction[] @relation("FinancialManualTransactionCreatedBy")
+  updatedFinancialManualTransactions FinancialManualTransaction[] @relation("FinancialManualTransactionUpdatedBy")
 }
 
 model UserSession {
@@ -178,6 +185,101 @@ enum WorkProfileContractType {
   MEI
   PJ
   AUTONOMO
+}
+
+enum HolidayScopeType {
+  NATIONAL
+  STATE
+  CITY
+}
+
+enum TimeEntryKind {
+  IN
+  OUT
+  BREAK_START
+  BREAK_END
+}
+
+enum TimeEntrySource {
+  APP
+  WEB
+  ADMIN
+  IMPORT
+}
+
+enum TimeEntryStatus {
+  REGISTERED
+  ADJUSTED
+  CANCELLED
+}
+
+enum TimeEntryIssueCode {
+  UNEXPECTED_FIRST_ENTRY
+  INVALID_SEQUENCE
+  MISSING_BREAK_END
+  MISSING_OUT
+}
+
+enum TimeEntryIssueSeverity {
+  WARNING
+  ERROR
+}
+
+enum TimeEntryIssueStatus {
+  OPEN
+  RESOLVED
+  AUTO_RESOLVED
+}
+
+enum TimeAdjustmentStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+enum TimeSheetPeriodStatus {
+  OPEN
+  CLOSED
+}
+
+enum TimeSheetPeriodEventAction {
+  CLOSE
+  REOPEN
+}
+
+enum FinancialTransactionCategoryType {
+  REVENUE
+  EXPENSE
+  BOTH
+}
+
+enum FinancialManualTransactionType {
+  EARNING
+  EXPENSE
+  PAYMENT
+  ADJUSTMENT
+}
+
+enum FinancialManualTransactionStatus {
+  PENDING
+  COMPLETED
+  CANCELLED
+}
+
+enum DsrWeeklyRestDay {
+  MON
+  TUE
+  WED
+  THU
+  FRI
+  SAT
+  SUN
+}
+
+enum DriverLeavePeriodType {
+  VACATION
+  LEAVE
+  SUSPENSION
 }
 
 enum DriverType {
@@ -318,11 +420,33 @@ model BenefitTemplate {
   @@index([isActive, type, updatedAt])
 }
 
+model Cargo {
+  id                 String                @id @default(cuid())
+  name               String
+  description        String?
+  department         String
+  level              String
+  levels             Json
+  cboCode            String?
+  cboTitle           String?
+  unhealthyAllowance String                @default("NONE")
+  hazardousAllowance String                @default("NONE")
+  isActive           Boolean               @default(true)
+  createdAt          DateTime              @default(now())
+  updatedAt          DateTime              @updatedAt
+
+  workProfiles WorkProfileTemplate[]
+
+  @@unique([name, department])
+  @@index([isActive, name])
+}
+
 model WorkProfileTemplate {
   id                         String                  @id @default(cuid())
   name                       String
   description                String?
   isActive                   Boolean                 @default(true)
+  cargoId                    String?
   cargoName                  String
   cargoLevel                 String?
   contractType               WorkProfileContractType
@@ -334,6 +458,16 @@ model WorkProfileTemplate {
   overtimeTemplateId         String?
   overtimeTemplateName       String?
   overtimeSummary            String?
+  usesNightPolicy            Boolean                 @default(false)
+  nightTemplateId            String?
+  nightTemplateName          String?
+  nightSummary               String?
+  holidayScopeType           HolidayScopeType?
+  holidayStateCode           String?
+  holidayCityCode            String?
+  holidaySummary             String?
+  toleranceMarkingMinutes    Int?
+  toleranceDailyMaxMinutes   Int?
   benefits                   Json?
   allowContractEditing       Boolean                 @default(true)
   allowJourneyCustomization  Boolean                 @default(true)
@@ -341,7 +475,67 @@ model WorkProfileTemplate {
   createdAt                  DateTime                @default(now())
   updatedAt                  DateTime                @updatedAt
 
+  cargo Cargo? @relation(fields: [cargoId], references: [id], onDelete: SetNull)
+
+  @@index([cargoId])
   @@index([isActive, updatedAt])
+}
+
+model WorkJourneyTemplate {
+  id                 String   @id @default(cuid())
+  name               String
+  description        String?
+  isActive           Boolean  @default(true)
+  type               String
+  allowedDays        Json
+  breakType          String
+  breakDurationMinutes Int?
+  maxHoursPerDay     Decimal  @db.Decimal(5, 2)
+  notes              String?
+  fixedConfig        Json?
+  flexibleConfig     Json?
+  intermittentConfig Json?
+  dsrEnabled         Boolean  @default(false)
+  dsrWeeklyRestDay   DsrWeeklyRestDay?
+  dsrReflectOvertime Boolean  @default(true)
+  dsrReflectNight    Boolean  @default(true)
+  dsrLoseOnUnjustifiedAbsence Boolean @default(false)
+  dsrDescription     String?
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  @@index([isActive, updatedAt])
+  @@index([type, isActive])
+}
+
+model Holiday {
+  id          String           @id @default(cuid())
+  date        DateTime
+  name        String
+  scopeType   HolidayScopeType @default(NATIONAL)
+  stateCode   String?
+  cityCode    String?
+  isActive    Boolean          @default(true)
+  createdAt   DateTime         @default(now())
+  updatedAt   DateTime         @updatedAt
+
+  @@index([date, isActive])
+  @@index([scopeType, stateCode, cityCode, isActive])
+  @@unique([date, scopeType, stateCode, cityCode, name])
+}
+
+model CboOccupation {
+  id          String   @id @default(cuid())
+  code        String   @unique
+  title       String
+  description String?
+  source      String?
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([isActive, title])
+  @@index([title])
 }
 
 model CompanyProfileConfig {
@@ -362,8 +556,103 @@ model CompanyProfileConfig {
   legalRepresentativeCpf     String?
   legalRepresentativeRole    String?
   contractSignatureCity      String?
+  geofenceEnabled            Boolean  @default(false)
+  geofenceBaseLatitude       Decimal? @db.Decimal(9, 6)
+  geofenceBaseLongitude      Decimal? @db.Decimal(9, 6)
+  geofenceRadiusMeters       Int      @default(150)
+  toleranceMarkingMinutes    Int      @default(5)
+  toleranceDailyMaxMinutes   Int      @default(10)
+  employmentLinkageConfigs   CompanyEmploymentLinkage[]
+  financialCategories        FinancialTransactionCategory[]
+  financialManualTransactions FinancialManualTransaction[]
   createdAt                  DateTime @default(now())
   updatedAt                  DateTime @updatedAt
+}
+
+model FinancialTransactionCategory {
+  id               String                           @id @default(cuid())
+  companyProfileId String
+  code             String
+  name             String
+  type             FinancialTransactionCategoryType @default(EXPENSE)
+  color            String?
+  icon             String?
+  isActive         Boolean                          @default(true)
+  sortOrder        Int                              @default(100)
+  createdAt        DateTime                         @default(now())
+  updatedAt        DateTime                         @updatedAt
+
+  companyProfile CompanyProfileConfig @relation(fields: [companyProfileId], references: [id], onDelete: Cascade)
+
+  @@unique([companyProfileId, code])
+  @@index([companyProfileId, isActive, sortOrder, name])
+}
+
+model FinancialManualTransaction {
+  id                            String                         @id @default(cuid())
+  companyProfileId              String
+  driverId                      String?
+  type                          FinancialManualTransactionType
+  status                        FinancialManualTransactionStatus @default(COMPLETED)
+  categoryCode                  String
+  description                   String
+  amount                        Decimal                        @db.Decimal(10, 2)
+  occurredAt                    DateTime
+  referenceId                   String?
+  notes                         String?
+  metadata                      Json?
+  isReversal                    Boolean                        @default(false)
+  reversalOfManualTransactionId String?
+  createdByUserId               String?
+  updatedByUserId               String?
+  createdAt                     DateTime                       @default(now())
+  updatedAt                     DateTime                       @updatedAt
+
+  companyProfile CompanyProfileConfig @relation(fields: [companyProfileId], references: [id], onDelete: Cascade)
+  driver         Driver?              @relation(fields: [driverId], references: [id], onDelete: SetNull)
+  createdBy      User?                @relation("FinancialManualTransactionCreatedBy", fields: [createdByUserId], references: [id], onDelete: SetNull)
+  updatedBy      User?                @relation("FinancialManualTransactionUpdatedBy", fields: [updatedByUserId], references: [id], onDelete: SetNull)
+
+  @@index([companyProfileId, occurredAt])
+  @@index([companyProfileId, driverId, occurredAt])
+  @@index([companyProfileId, categoryCode, occurredAt])
+}
+
+model CompanyEmploymentLinkage {
+  id               String                  @id @default(cuid())
+  companyProfileId String
+  key              WorkProfileContractType
+  label            String
+  description      String?
+  isActive         Boolean                 @default(true)
+  sortOrder        Int                     @default(1)
+  settings         Json?
+  createdAt        DateTime                @default(now())
+  updatedAt        DateTime                @updatedAt
+
+  companyProfile CompanyProfileConfig @relation(fields: [companyProfileId], references: [id], onDelete: Cascade)
+  rules          CompanyEmploymentLinkageRule[]
+
+  @@unique([companyProfileId, key])
+  @@index([companyProfileId, sortOrder, key])
+}
+
+model CompanyEmploymentLinkageRule {
+  id                       String   @id @default(cuid())
+  companyEmploymentLinkageId String
+  code                     String
+  name                     String
+  description              String?
+  isActive                 Boolean  @default(true)
+  priority                 Int      @default(100)
+  settings                 Json
+  createdAt                DateTime @default(now())
+  updatedAt                DateTime @updatedAt
+
+  companyEmploymentLinkage CompanyEmploymentLinkage @relation(fields: [companyEmploymentLinkageId], references: [id], onDelete: Cascade)
+
+  @@unique([companyEmploymentLinkageId, code])
+  @@index([companyEmploymentLinkageId, isActive, priority])
 }
 
 enum PricingRuleScheduleType {
@@ -441,11 +730,179 @@ model Driver {
   decisions     DriverRideDecision[]
   pushSubscriptions DriverPushSubscription[]
   expoPushTokens DriverExpoPushToken[]
+  financialManualTransactions FinancialManualTransaction[]
+  leavePeriods  DriverLeavePeriod[]
   vehicles      Vehicle[]
+  timeEntries   TimeEntry[]
+  timeEntryIssues TimeEntryIssue[]
+  timeAdjustments TimeAdjustmentRequest[]
+  timesheetDays TimeSheetDay[]
+  timesheetPeriods TimeSheetPeriod[]
   fleetAssignments FleetVehicleAssignment[]
   defaultFleetVehicle FleetVehicle? @relation("DriverDefaultFleetVehicle", fields: [defaultFleetVehicleId], references: [id])
 
   @@index([defaultFleetVehicleId])
+}
+
+model TimeEntry {
+  id         String          @id @default(cuid())
+  driverId   String
+  createdByUserId String?
+  updatedByUserId String?
+  occurredAt DateTime
+  kind       TimeEntryKind
+  source     TimeEntrySource @default(APP)
+  status     TimeEntryStatus @default(REGISTERED)
+  timezone   String?
+  deviceMeta Json?
+  geo        Json?
+  notes      String?
+  createdAt  DateTime        @default(now())
+  updatedAt  DateTime        @updatedAt
+
+  driver Driver @relation(fields: [driverId], references: [id], onDelete: Cascade)
+  createdByUser User? @relation("TimeEntryCreatedBy", fields: [createdByUserId], references: [id], onDelete: SetNull)
+  updatedByUser User? @relation("TimeEntryUpdatedBy", fields: [updatedByUserId], references: [id], onDelete: SetNull)
+  adjustments TimeAdjustmentRequest[]
+
+  @@index([driverId, occurredAt])
+  @@index([occurredAt])
+  @@index([kind, occurredAt])
+  @@index([status, occurredAt])
+  @@index([createdByUserId])
+  @@index([updatedByUserId])
+}
+
+model TimeAdjustmentRequest {
+  id                String               @id @default(cuid())
+  driverId          String
+  timeEntryId       String?
+  requestedByUserId String?
+  updatedByUserId   String?
+  reviewedByUserId  String?
+  reason            String
+  requestedKind     TimeEntryKind?
+  requestedOccurredAt DateTime?
+  requestedTimezone String?
+  requestedGeo      Json?
+  requestedNotes    String?
+  originalSnapshot  Json?
+  requestedSnapshot Json?
+  status            TimeAdjustmentStatus @default(PENDING)
+  reviewerNote      String?
+  reviewedAt        DateTime?
+  createdAt         DateTime             @default(now())
+  updatedAt         DateTime             @updatedAt
+
+  driver Driver @relation(fields: [driverId], references: [id], onDelete: Cascade)
+  timeEntry TimeEntry? @relation(fields: [timeEntryId], references: [id], onDelete: SetNull)
+  requestedByUser User? @relation("TimeAdjustmentRequestedBy", fields: [requestedByUserId], references: [id], onDelete: SetNull)
+  updatedByUser User? @relation("TimeAdjustmentUpdatedBy", fields: [updatedByUserId], references: [id], onDelete: SetNull)
+  reviewedByUser User? @relation("TimeAdjustmentReviewedBy", fields: [reviewedByUserId], references: [id], onDelete: SetNull)
+
+  @@index([driverId, status, createdAt])
+  @@index([timeEntryId])
+  @@index([requestedByUserId])
+  @@index([updatedByUserId])
+  @@index([reviewedByUserId])
+  @@index([status, createdAt])
+}
+
+model TimeEntryIssue {
+  id          String               @id @default(cuid())
+  externalKey String               @unique
+  driverId    String
+  dateKey     String
+  code        TimeEntryIssueCode
+  severity    TimeEntryIssueSeverity
+  status      TimeEntryIssueStatus @default(OPEN)
+  message     String
+  entryIds    Json
+  resolvedAt  DateTime?
+  createdAt   DateTime             @default(now())
+  updatedAt   DateTime             @updatedAt
+
+  driver Driver @relation(fields: [driverId], references: [id], onDelete: Cascade)
+
+  @@index([driverId, dateKey])
+  @@index([status, dateKey])
+  @@index([code, dateKey])
+}
+
+model TimeSheetDay {
+  id                    String   @id @default(cuid())
+  driverId              String
+  dateKey               String
+  workProfileTemplateId String?
+  journeyTemplateId     String?
+  expectedMinutes       Int      @default(0)
+  workedMinutes         Int      @default(0)
+  breakMinutes          Int      @default(0)
+  latenessMinutes       Int      @default(0)
+  earlyLeaveMinutes     Int      @default(0)
+  overtimeMinutes       Int      @default(0)
+  hasOpenIssues         Boolean  @default(false)
+  openIssueCount        Int      @default(0)
+  calculationMeta       Json?
+  calculatedAt          DateTime @default(now())
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
+
+  driver Driver @relation(fields: [driverId], references: [id], onDelete: Cascade)
+
+  @@unique([driverId, dateKey])
+  @@index([dateKey])
+  @@index([driverId, calculatedAt])
+}
+
+model TimeSheetPeriod {
+  id                  String   @id @default(cuid())
+  driverId            String
+  periodKey           String
+  expectedMinutes     Int      @default(0)
+  workedMinutes       Int      @default(0)
+  normalMinutes       Int      @default(0)
+  overtimeMinutes     Int      @default(0)
+  nightMinutes        Int      @default(0)
+  breakMinutes        Int      @default(0)
+  latenessMinutes     Int      @default(0)
+  earlyLeaveMinutes   Int      @default(0)
+  absenceDays         Int      @default(0)
+  workedDays          Int      @default(0)
+  openIssueDays       Int      @default(0)
+  openIssueCount      Int      @default(0)
+  status              TimeSheetPeriodStatus @default(OPEN)
+  closedAt            DateTime?
+  reopenedAt          DateTime?
+  closedByUserId      String?
+  reopenedByUserId    String?
+  lockNote            String?
+  rulesSnapshot       Json?
+  calculatedAt        DateTime @default(now())
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+
+  driver Driver @relation(fields: [driverId], references: [id], onDelete: Cascade)
+  events TimeSheetPeriodEvent[]
+
+  @@unique([driverId, periodKey])
+  @@index([periodKey])
+  @@index([driverId, calculatedAt])
+  @@index([status, periodKey])
+}
+
+model TimeSheetPeriodEvent {
+  id          String @id @default(cuid())
+  periodId    String
+  action      TimeSheetPeriodEventAction
+  actorUserId String?
+  note        String?
+  createdAt   DateTime @default(now())
+
+  period TimeSheetPeriod @relation(fields: [periodId], references: [id], onDelete: Cascade)
+
+  @@index([periodId, createdAt])
+  @@index([action, createdAt])
 }
 
 model Vehicle {
@@ -463,6 +920,23 @@ model Vehicle {
 
   @@unique([driverId, plate])
   @@index([driverId, isActive])
+}
+
+model DriverLeavePeriod {
+  id         String               @id @default(cuid())
+  driverId   String
+  type       DriverLeavePeriodType
+  startDate  DateTime
+  endDate    DateTime
+  reason     String?
+  notes      String?
+  createdAt  DateTime             @default(now())
+  updatedAt  DateTime             @updatedAt
+
+  driver Driver @relation(fields: [driverId], references: [id], onDelete: Cascade)
+
+  @@index([driverId, startDate, endDate])
+  @@index([type, startDate, endDate])
 }
 
 model FleetVehicle {

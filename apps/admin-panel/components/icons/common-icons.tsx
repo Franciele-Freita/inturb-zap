@@ -69,6 +69,22 @@ export function ChevronDownIcon({ strokeWidth = 1.9, ...props }: IconProps) {
   );
 }
 
+export function ChevronLeftIcon({ strokeWidth = 1.9, ...props }: IconProps) {
+  return (
+    <IconBase strokeWidth={strokeWidth} {...props}>
+      <path d="m15 6-6 6 6 6" />
+    </IconBase>
+  );
+}
+
+export function ChevronRightIcon({ strokeWidth = 1.9, ...props }: IconProps) {
+  return (
+    <IconBase strokeWidth={strokeWidth} {...props}>
+      <path d="m9 6 6 6-6 6" />
+    </IconBase>
+  );
+}
+
 export function CalendarIcon(props: IconProps) {
   return (
     <IconBase {...props}>
@@ -101,6 +117,36 @@ export function HeadsetIcon(props: IconProps) {
       <path d="M3 11a9 9 0 1 1 18 0"/>
       <path d="M21 11v5a2 2 0 0 1-2 2h-1a2 2 0 0 1-2-2v-3a2 2 0 0 1 2-2h3Z"/>
       <path d="M21 16v2a4 4 0 0 1-4 4h-5"/>
+    </IconBase>
+  );
+}
+
+export function EditIcon(props: IconProps) {
+  return (
+    <IconBase {...props}>
+      <path d="M12 20h9" />
+      <path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z" />
+    </IconBase>
+  );
+}
+
+export function TogglePowerIcon(props: IconProps) {
+  return (
+    <IconBase {...props}>
+      <path d="M12 2v10" />
+      <path d="M17.657 6.343a8 8 0 1 1-11.314 0" />
+    </IconBase>
+  );
+}
+
+export function TrashIcon(props: IconProps) {
+  return (
+    <IconBase {...props}>
+      <path d="M3 6h18" />
+      <path d="M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2" />
+      <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" />
+      <path d="M10 11v6" />
+      <path d="M14 11v6" />
     </IconBase>
   );
 }

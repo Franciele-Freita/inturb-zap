@@ -8,6 +8,7 @@ type NightPolicySnapshot = {
   endTime: string;
   percent: number;
   accumulatesWithOvertime: boolean;
+  reflectsOnDsr: boolean;
 };
 
 function asRecord(value: unknown): Record<string, unknown> {
@@ -56,6 +57,7 @@ export function readNightPolicySnapshot(settings: unknown): NightPolicySnapshot 
     startTime: enabled ? toClock(night.startTime, "22:00") : "22:00",
     endTime: enabled ? toClock(night.endTime, "05:00") : "05:00",
     percent: enabled ? toNumber(night.percent, fallbackPercent) : fallbackPercent,
-    accumulatesWithOvertime: enabled ? toBoolean(night.accumulatesWithOvertime, true) : false
+    accumulatesWithOvertime: enabled ? toBoolean(night.accumulatesWithOvertime, true) : false,
+    reflectsOnDsr: enabled ? toBoolean(night.reflectsOnDsr, true) : false
   };
 }

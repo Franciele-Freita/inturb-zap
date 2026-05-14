@@ -1,15 +1,17 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { FormEvent, useEffect, useMemo, useState } from "react";
+import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import {
+  CompanySettings,
   DriverContractSignatureRequestResult,
-  DriverEmploymentContractEndorsementType,
   DriverComplianceHistoryItem,
   DriverCompensationSettings,
   DriverContract,
   DriverContractProfile,
   DriverAddress,
+  DriverDocument,
+  DriverDocumentCategory,
   DriverEmergencyContact,
   FleetAssignmentMode,
   FleetVehicle,
@@ -21,16 +23,19 @@ import {
   DriverProfile,
   DriverToxicology,
   DriverType,
+  DriverUpsertPayload,
   DriverVehicle,
   formatCurrency,
-  request
+  isValidCpf,
+  request,
+  requestCompanySettings,
+  validateDriverUpsertPayload
 } from "../lib/api";
 import {
   DriverEditorSection,
   DriverProfileEditorHero,
   DriverProfileEditorStepNav
 } from "./driver-profile-editor-shell";
-import { DriverProfileEditorContractsSection } from "./driver-profile-editor-contracts-section";
 import { DriverProfileEditorComplianceSection } from "./driver-profile-editor-compliance-section";
 import { DriverProfileEditorContactSection } from "./driver-profile-editor-contact-section";
 import { DriverProfileEditorAccessibilitySection } from "./driver-profile-editor-accessibility-section";
@@ -219,8 +224,7 @@ const driverEditorSections: DriverEditorSection[] = [
   "compliance",
   "contact",
   "accessibility",
-  "contract",
-  "contracts"
+  "contract"
 ];
 
 function digitsOnly(value: string): string {
@@ -262,6 +266,14 @@ function formatPhoneInput(value: string): string {
   }
 
   return `(${digits.slice(0, 2)}) ${digits.slice(2, 7)}-${digits.slice(7)}`;
+}
+
+function isValidEmergencyContact(contact: DriverEmergencyContact): boolean {
+  return (
+    contact.name.trim().length > 0 &&
+    contact.relation.trim().length > 0 &&
+    digitsOnly(contact.phone).length >= 10
+  );
 }
 
 function formatVehicleSummary(vehicle: VehicleDraft, fallbackLabel: string): string {
@@ -339,6 +351,99 @@ function formatShortDate(value?: string): string {
   }
 
   return parsed.toLocaleDateString("pt-BR");
+}
+
+type DriverComplianceEngineResult = {
+  canBeActive: boolean;
+  blockers: string[];
+  expiredDocumentIds: string[];
+  replacedCategories: DriverDocumentCategory[];
+};
+
+const mandatoryVaultCategories: DriverDocumentCategory[] = ["IDENTIFICATION", "CRIMINAL_RECORD"];
+
+function resolveVaultCategoryLabel(category: DriverDocumentCategory): string {
+  if (category === "IDENTIFICATION") return "Identificacao";
+  if (category === "CRIMINAL_RECORD") return "Antecedentes";
+  if (category === "RESIDENCE_PROOF") return "Comprovante de residencia";
+  if (category === "TRAINING") return "Treinamento";
+  return "Outros";
+}
+
+function parseDateOnly(value?: string): Date | null {
+  if (!value?.trim()) return null;
+  const parsed = new Date(`${value.trim()}T00:00:00`);
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
+}
+
+function isDateExpired(value?: string): boolean {
+  const parsed = parseDateOnly(value);
+  if (!parsed) return false;
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  return parsed.getTime() < today.getTime();
+}
+
+function normalizeVaultDocumentStatus(document: DriverDocument): DriverDocument["status"] {
+  if (document.status === "PENDING_REVIEW") return "PENDING_REVIEW";
+  return isDateExpired(document.expiresAt) ? "EXPIRED" : "VALID";
+}
+
+function evaluateDriverCompliance(
+  input: {
+    driverLicense?: DriverLicense;
+    toxicology?: DriverToxicology;
+    additionalDocuments: DriverDocument[];
+  },
+  previousDocuments: DriverDocument[]
+): DriverComplianceEngineResult {
+  const blockers: string[] = [];
+  const normalizedDocuments = input.additionalDocuments.map((item) => ({
+    ...item,
+    status: normalizeVaultDocumentStatus(item)
+  }));
+  const expiredDocumentIds = normalizedDocuments
+    .filter((item) => item.status === "EXPIRED")
+    .map((item) => item.id);
+
+  if (!input.driverLicense?.expirationDate?.trim()) {
+    blockers.push("CNH sem data de validade.");
+  } else if (isDateExpired(input.driverLicense.expirationDate)) {
+    blockers.push("CNH vencida.");
+  }
+
+  if (input.toxicology?.required) {
+    if (!input.toxicology.expirationDate?.trim()) {
+      blockers.push("Exame toxicologico sem data de validade.");
+    } else if (isDateExpired(input.toxicology.expirationDate)) {
+      blockers.push("Exame toxicologico vencido.");
+    }
+  }
+
+  mandatoryVaultCategories.forEach((category) => {
+    const doc = normalizedDocuments.find((item) => item.category === category);
+    if (!doc) {
+      blockers.push(`Documento obrigatorio ausente (${resolveVaultCategoryLabel(category)}).`);
+      return;
+    }
+    if (doc.status === "EXPIRED") {
+      blockers.push(`Documento obrigatorio vencido (${resolveVaultCategoryLabel(category)}).`);
+    }
+  });
+
+  const categories = [...new Set([...previousDocuments, ...normalizedDocuments].map((item) => item.category))];
+  const replacedCategories = categories.filter((category) => {
+    const previousDoc = previousDocuments.find((item) => item.category === category);
+    const currentDoc = normalizedDocuments.find((item) => item.category === category);
+    return Boolean(previousDoc && currentDoc && previousDoc.id !== currentDoc.id);
+  });
+
+  return {
+    canBeActive: blockers.length === 0,
+    blockers,
+    expiredDocumentIds,
+    replacedCategories
+  };
 }
 
 function formatEmploymentWindow(value?: string): { tenureLabel: string; sinceLabel: string } {
@@ -781,9 +886,13 @@ export function DriverProfileEditorSaas({ mode, initialDriver }: DriverProfileEd
   const [complianceHistory, setComplianceHistory] = useState<DriverComplianceHistoryItem[]>(
     initialDriver?.complianceHistory ?? []
   );
+  const [additionalDocuments, setAdditionalDocuments] = useState<DriverDocument[]>(
+    initialDriver?.additionalDocuments ?? []
+  );
   const [contractProfile, setContractProfile] = useState<DriverContractProfile>(() => deriveContractProfile(initialDriver));
   const [journey, setJourney] = useState<DriverJourney | undefined>(initialDriver?.journey ?? emptyDriverJourney);
   const [contract, setContract] = useState<DriverContract | undefined>(initialDriver?.contract ?? emptyDriverContract);
+  const [companySettings, setCompanySettings] = useState<CompanySettings | null>(null);
   const [newVehicles, setNewVehicles] = useState<VehicleDraft[]>([]);
   const [existingVehicles, setExistingVehicles] = useState<VehicleDraft[]>(
     initialDriver?.vehicles.map((vehicle) => toVehicleDraft(vehicle)) ?? []
@@ -796,19 +905,34 @@ export function DriverProfileEditorSaas({ mode, initialDriver }: DriverProfileEd
   const [isSavingDriver, setIsSavingDriver] = useState(false);
   const [isSavingVehicle, setIsSavingVehicle] = useState<string | null>(null);
   const [isGeneratingContract, setIsGeneratingContract] = useState(false);
-  const [isRenewingContract, setIsRenewingContract] = useState(false);
   const [isActivatingContract, setIsActivatingContract] = useState(false);
   const [isRequestingSignature, setIsRequestingSignature] = useState(false);
   const [isTerminatingContract, setIsTerminatingContract] = useState(false);
-  const [isCreatingEndorsement, setIsCreatingEndorsement] = useState(false);
   const [activeSection, setActiveSection] = useState<DriverEditorSection>("basic");
   const [expandedVehicleKey, setExpandedVehicleKey] = useState<string | null>(null);
+  const [contactStepBlockedAttempt, setContactStepBlockedAttempt] = useState(false);
 
   useEffect(() => {
     if (initialDriver?.compensation) {
       setCompensationSettings(initialDriver.compensation);
     }
   }, [initialDriver]);
+
+  useEffect(() => {
+    let mounted = true;
+    void requestCompanySettings()
+      .then((settings) => {
+        if (!mounted) return;
+        setCompanySettings(settings);
+      })
+      .catch(() => {
+        if (!mounted) return;
+        setCompanySettings(null);
+      });
+    return () => {
+      mounted = false;
+    };
+  }, []);
 
   useEffect(() => {
     setDriverHasPassword(initialDriver?.hasPassword ?? false);
@@ -851,7 +975,7 @@ export function DriverProfileEditorSaas({ mode, initialDriver }: DriverProfileEd
   const cnhCategoryLabel = cnhCategory ? `CNH categoria ${cnhCategory}` : "CNH pendente";
   const requiredCoreFieldsReady =
     driverForm.name.trim().length > 0 &&
-    digitsOnly(driverForm.cpf).length === 11 &&
+    isValidCpf(driverForm.cpf) &&
     digitsOnly(driverForm.phone).length >= 10 &&
     driverForm.email.trim().length > 0 &&
     birthDateValue !== null &&
@@ -860,15 +984,78 @@ export function DriverProfileEditorSaas({ mode, initialDriver }: DriverProfileEd
     () => [...existingVehicles, ...newVehicles].filter((vehicle) => vehicle.label.trim() && vehicle.plate.trim()),
     [existingVehicles, newVehicles]
   );
-  const emergencyContactsAreValid = emergencyContacts.length >= minimumEmergencyContactsRequired;
+  const validEmergencyContactsCount = useMemo(
+    () => emergencyContacts.filter(isValidEmergencyContact).length,
+    [emergencyContacts]
+  );
+  const emergencyContactsAreValid = validEmergencyContactsCount >= minimumEmergencyContactsRequired;
+  useEffect(() => {
+    if (emergencyContactsAreValid && contactStepBlockedAttempt) {
+      setContactStepBlockedAttempt(false);
+    }
+  }, [emergencyContactsAreValid, contactStepBlockedAttempt]);
+  const previousDocumentsRef = useRef<DriverDocument[]>(initialDriver?.additionalDocuments ?? []);
+  const previousExpiredDocIdsRef = useRef<Set<string>>(new Set());
+  const complianceEngine = useMemo(
+    () =>
+      evaluateDriverCompliance(
+        {
+          driverLicense,
+          toxicology,
+          additionalDocuments
+        },
+        previousDocumentsRef.current
+      ),
+    [driverLicense, toxicology, additionalDocuments]
+  );
+
+  useEffect(() => {
+    const historyEntries: DriverComplianceHistoryItem[] = [];
+    const nowIso = new Date().toISOString();
+
+    complianceEngine.replacedCategories.forEach((category) => {
+      historyEntries.push({
+        id: `vault-replaced-${category}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+        title: "Documento substituido",
+        meta: "Document Vault",
+        detail: `Documento da categoria ${resolveVaultCategoryLabel(category)} foi substituido.`,
+        createdAt: nowIso
+      });
+    });
+
+    const previousExpired = previousExpiredDocIdsRef.current;
+    complianceEngine.expiredDocumentIds
+      .filter((id) => !previousExpired.has(id))
+      .forEach((expiredId) => {
+        const expiredDoc = additionalDocuments.find((item) => item.id === expiredId);
+        if (!expiredDoc) return;
+        historyEntries.push({
+          id: `vault-expired-${expiredId}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+          title: "Documento vencido",
+          meta: "Compliance automatizado",
+          detail: `${expiredDoc.title} venceu em ${expiredDoc.expiresAt ? new Date(expiredDoc.expiresAt).toLocaleDateString("pt-BR") : "data nao informada"}.`,
+          createdAt: nowIso
+        });
+      });
+
+    if (historyEntries.length > 0) {
+      setComplianceHistory((current) => [...historyEntries, ...current]);
+    }
+
+    previousExpiredDocIdsRef.current = new Set(complianceEngine.expiredDocumentIds);
+    previousDocumentsRef.current = additionalDocuments.map((item) => ({
+      ...item,
+      status: normalizeVaultDocumentStatus(item)
+    }));
+  }, [additionalDocuments, complianceEngine.expiredDocumentIds, complianceEngine.replacedCategories]);
   const submitRequirementIssues = useMemo<SubmitRequirementIssue[]>(() => {
     const issues: SubmitRequirementIssue[] = [];
 
     if (driverForm.name.trim().length === 0) {
       issues.push({ section: "basic", message: "Dados basicos: informe o nome do motorista." });
     }
-    if (digitsOnly(driverForm.cpf).length !== 11) {
-      issues.push({ section: "basic", message: "Dados basicos: CPF deve ter 11 digitos." });
+    if (!isValidCpf(driverForm.cpf)) {
+      issues.push({ section: "basic", message: "Dados basicos: CPF invalido." });
     }
     if (digitsOnly(driverForm.phone).length < 10) {
       issues.push({ section: "contact", message: "Contato e emergencia: telefone principal invalido." });
@@ -885,7 +1072,7 @@ export function DriverProfileEditorSaas({ mode, initialDriver }: DriverProfileEd
     if (!emergencyContactsAreValid) {
       issues.push({
         section: "contact",
-        message: `Contato e emergencia: cadastre pelo menos ${minimumEmergencyContactsRequired} contatos.`
+        message: `Contato e emergencia: mantenha pelo menos ${minimumEmergencyContactsRequired} contatos validos (nome, parentesco e telefone).`
       });
     }
     if (!customValueIsValid) {
@@ -908,6 +1095,12 @@ export function DriverProfileEditorSaas({ mode, initialDriver }: DriverProfileEd
           : "Dados basicos: senha e confirmacao precisam coincidir."
       });
     }
+    if (driverForm.operationalStatus === "ACTIVE" && !complianceEngine.canBeActive) {
+      issues.push({
+        section: "compliance",
+        message: `Incapacidade por Compliance: ${complianceEngine.blockers.join(" ")}`
+      });
+    }
 
     return issues;
   }, [
@@ -919,10 +1112,14 @@ export function DriverProfileEditorSaas({ mode, initialDriver }: DriverProfileEd
     driverForm.gender,
     driverForm.name,
     driverForm.phone,
+    driverForm.operationalStatus,
     emergencyContactsAreValid,
+    validEmergencyContactsCount,
     minimumEmergencyContactsRequired,
     passwordIsRequired,
-    passwordIsValid
+    passwordIsValid,
+    complianceEngine.canBeActive,
+    complianceEngine.blockers
   ]);
   const canSubmit = !isSavingDriver && submitRequirementIssues.length === 0;
   const activeVehicle = useMemo(
@@ -945,12 +1142,17 @@ export function DriverProfileEditorSaas({ mode, initialDriver }: DriverProfileEd
     } else if (driverForm.operationalStatus === "SUSPENDED") {
       issues.push("Motorista suspenso para operacao.");
     }
+    if (driverForm.operationalStatus === "ACTIVE" && !complianceEngine.canBeActive) {
+      issues.push(...complianceEngine.blockers);
+    }
 
     return issues;
-  }, [driverForm.operationalStatus]);
+  }, [driverForm.operationalStatus, complianceEngine.canBeActive, complianceEngine.blockers]);
   const operationEligible = operationBlockingIssues.length === 0;
+  const blockedWizardSections: DriverEditorSection[] = complianceEngine.canBeActive ? [] : ["compliance"];
   const sidebarStatusChecks = [
     { label: "Cadastro completo", complete: requiredCoreFieldsReady },
+    { label: "Conformidade (step 2)", complete: complianceEngine.canBeActive },
     {
       label: `Contatos de emergencia (${minimumEmergencyContactsRequired}+)`,
       complete: emergencyContactsAreValid
@@ -971,6 +1173,8 @@ export function DriverProfileEditorSaas({ mode, initialDriver }: DriverProfileEd
   }, [activeVehicle]);
   const driverTypeLabel = getDriverTypeLabel(driverForm.driverType);
   const contractPhaseLabel = resolveContractPhaseLabel(contract);
+  const companyContractProfileOptions = companySettings?.contractProfiles ?? [];
+  const companyBenefitOptions = companySettings?.benefits ?? [];
   const employmentWindow = useMemo(() => formatEmploymentWindow(initialDriver?.createdAt), [initialDriver?.createdAt]);
   const sidebarCompensationModeLabel = getCompensationModeLabel(
     compensationPreview?.effectiveModel ?? compensationSettings?.effectiveModel ?? "PERCENT"
@@ -996,6 +1200,14 @@ export function DriverProfileEditorSaas({ mode, initialDriver }: DriverProfileEd
       return;
     }
 
+    if (activeSection === "contact" && !emergencyContactsAreValid) {
+      setContactStepBlockedAttempt(true);
+      setStatusMessage(
+        `Cadastre pelo menos ${minimumEmergencyContactsRequired} contatos de emergencia validos para concluir a etapa 03.`
+      );
+      return;
+    }
+
     setActiveSection(driverEditorSections[activeSectionIndex + 1]);
   }
 
@@ -1017,6 +1229,20 @@ export function DriverProfileEditorSaas({ mode, initialDriver }: DriverProfileEd
 
   function handlePhoneChange(value: string) {
     updateDriverField("phone", formatPhoneInput(value));
+  }
+
+  function handleOperationalStatusChange(value: DriverOperationalStatus) {
+    if (value === "ACTIVE" && !complianceEngine.canBeActive) {
+      setStatusMessage(`Incapacidade por Compliance: ${complianceEngine.blockers.join(" ")}`);
+      return;
+    }
+    setDriverForm((current) => {
+      if (current.operationalStatus === value) {
+        return current;
+      }
+
+      return { ...current, operationalStatus: value };
+    });
   }
 
   function handleBirthPartChange(part: "birthDay" | "birthMonth" | "birthYear", value: string) {
@@ -1095,14 +1321,14 @@ export function DriverProfileEditorSaas({ mode, initialDriver }: DriverProfileEd
     });
   }
 
-  function buildDriverRequestBody() {
+  function buildDriverRequestBody(): DriverUpsertPayload {
     const contractPayload = sanitizeContractForSave(contract);
 
     return {
-      name: driverForm.name,
-      cpf: driverForm.cpf,
-      phone: driverForm.phone,
-      email: driverForm.email,
+      name: driverForm.name.trim(),
+      cpf: driverForm.cpf.trim(),
+      phone: driverForm.phone.trim(),
+      email: driverForm.email.trim() || undefined,
       isActive: driverForm.isActive,
       password: passwordValue || undefined,
       photoUrl: driverPhotoUrl.trim() || undefined,
@@ -1124,15 +1350,29 @@ export function DriverProfileEditorSaas({ mode, initialDriver }: DriverProfileEd
       contract: contractPayload,
       compensationModel: compensationForm.customModel,
       compensationValue: Number(compensationForm.customValue || 0),
-      compensationNotes: compensationForm.customNotes
+      compensationNotes: compensationForm.customNotes.trim() || undefined
     };
+  }
+
+  function validateDriverBeforeSave(payload: DriverUpsertPayload): string[] {
+    const errors = validateDriverUpsertPayload(payload);
+    if (payload.operationalStatus === "ACTIVE" && !complianceEngine.canBeActive) {
+      errors.push(...complianceEngine.blockers);
+    }
+    return errors;
   }
 
   async function handleCreateDriver(options?: { redirect?: boolean }) {
     const redirect = options?.redirect ?? true;
+    const payload = buildDriverRequestBody();
+    const validationErrors = validateDriverBeforeSave(payload);
+    if (validationErrors.length > 0) {
+      throw new Error(validationErrors[0]);
+    }
+
     const createdDriver = await request<DriverProfile>("/admin/drivers", {
       method: "POST",
-      body: JSON.stringify(buildDriverRequestBody())
+      body: JSON.stringify(payload)
     });
 
     if (redirect) {
@@ -1149,9 +1389,15 @@ export function DriverProfileEditorSaas({ mode, initialDriver }: DriverProfileEd
       return null;
     }
 
+    const payload = buildDriverRequestBody();
+    const validationErrors = validateDriverBeforeSave(payload);
+    if (validationErrors.length > 0) {
+      throw new Error(validationErrors[0]);
+    }
+
     const updatedDriver = await request<DriverProfile>(`/admin/drivers/${initialDriver.id}`, {
       method: "PATCH",
-      body: JSON.stringify(buildDriverRequestBody())
+      body: JSON.stringify(payload)
     });
 
     setDriverForm(toDriverFormState(updatedDriver));
@@ -1164,6 +1410,7 @@ export function DriverProfileEditorSaas({ mode, initialDriver }: DriverProfileEd
     setAddress(updatedDriver.address);
     setDriverLicense(updatedDriver.driverLicense);
     setToxicology(updatedDriver.toxicology ?? emptyDriverToxicology);
+    setAdditionalDocuments(updatedDriver.additionalDocuments ?? []);
     setComplianceHistory(updatedDriver.complianceHistory ?? []);
     setContractProfile(deriveContractProfile(updatedDriver));
     setJourney(updatedDriver.journey ?? emptyDriverJourney);
@@ -1332,46 +1579,6 @@ export function DriverProfileEditorSaas({ mode, initialDriver }: DriverProfileEd
     }
   }
 
-  async function handleRenewEmploymentContract(
-    contractId: string,
-    payload?: {
-      templateKey?: string;
-      templateName?: string;
-      templateVersion?: string;
-      templateContent?: string;
-      contract?: Partial<DriverContract>;
-      journey?: Partial<DriverJourney>;
-    }
-  ) {
-    if (!initialDriver?.id) {
-      setStatusMessage("Salve o cadastro do motorista antes de renovar contrato.");
-      return;
-    }
-
-    setIsRenewingContract(true);
-    try {
-      const updatedDriver = await request<DriverProfile>(
-        `/admin/drivers/${initialDriver.id}/contracts/${contractId}/renew`,
-        {
-          method: "POST",
-          body: JSON.stringify({
-            ...(payload ?? {}),
-            templateContent: payload?.templateContent || undefined
-          })
-        }
-      );
-      setContractProfile(deriveContractProfile(updatedDriver));
-      setContract(updatedDriver.contract ?? emptyDriverContract);
-      setJourney(updatedDriver.journey ?? emptyDriverJourney);
-      setStatusMessage(`Renovacao gerada para ${updatedDriver.name}.`);
-      router.refresh();
-    } catch (error) {
-      setStatusMessage(error instanceof Error ? error.message : "Falha ao gerar renovacao.");
-    } finally {
-      setIsRenewingContract(false);
-    }
-  }
-
   async function handleActivateEmploymentContract(contractId: string) {
     if (!initialDriver?.id) {
       setStatusMessage("Salve o cadastro do motorista antes de ativar contrato.");
@@ -1479,54 +1686,6 @@ export function DriverProfileEditorSaas({ mode, initialDriver }: DriverProfileEd
     }
   }
 
-  async function handleCreateContractEndorsement(
-    contractId: string,
-    payload: {
-      type: DriverEmploymentContractEndorsementType;
-      effectiveDate: string;
-      notes?: string;
-      applySettings?: boolean;
-      contract?: Partial<DriverContract>;
-      journey?: Partial<DriverJourney>;
-    }
-  ) {
-    if (!initialDriver?.id) {
-      setStatusMessage("Salve o cadastro do motorista antes de criar endosso.");
-      return;
-    }
-
-    setIsCreatingEndorsement(true);
-    try {
-      const updatedDriver = await request<DriverProfile>(
-        `/admin/drivers/${initialDriver.id}/contracts/${contractId}/endorse`,
-        {
-          method: "POST",
-          body: JSON.stringify({
-            type: payload.type,
-            effectiveDate: payload.effectiveDate,
-            notes: payload.notes,
-            applySettings: payload.applySettings,
-            contract: payload.contract,
-            journey: payload.journey,
-            changes: {
-              source: "DRIVER_PROFILE_EDITOR",
-              endorsementType: payload.type
-            }
-          })
-        }
-      );
-      setContractProfile(deriveContractProfile(updatedDriver));
-      setContract(updatedDriver.contract ?? emptyDriverContract);
-      setJourney(updatedDriver.journey ?? emptyDriverJourney);
-      setStatusMessage(`Endosso criado para ${updatedDriver.name}.`);
-      router.refresh();
-    } catch (error) {
-      setStatusMessage(error instanceof Error ? error.message : "Falha ao criar endosso.");
-    } finally {
-      setIsCreatingEndorsement(false);
-    }
-  }
-
   return (
     <main className="page-shell page-shell-wide driver-editor-page-shell">
       <section className="overtime-editor-page-header driver-editor-page-header">
@@ -1555,13 +1714,30 @@ export function DriverProfileEditorSaas({ mode, initialDriver }: DriverProfileEd
           ) : null}
 
           <div className="driver-editor-workspace">
-            <DriverProfileEditorStepNav activeSection={activeSection} onSectionChange={setActiveSection} />
+            <DriverProfileEditorStepNav
+              activeSection={activeSection}
+              blockedSections={blockedWizardSections}
+              onSectionChange={setActiveSection}
+            />
 
             <form className="driver-editor-form" onSubmit={handleSubmit}>
               {statusMessage ? (
                 <p className="driver-editor-status-message" role="status" aria-live="polite">
                   {statusMessage}
                 </p>
+              ) : null}
+              {!complianceEngine.canBeActive ? (
+                <div className="driver-editor-compliance-warning" role="alert">
+                  <strong>Incapacidade por Compliance</strong>
+                  <ul>
+                    {complianceEngine.blockers.map((item) => (
+                      <li key={item}>{item}</li>
+                    ))}
+                  </ul>
+                  <button type="button" className="secondary" onClick={() => setActiveSection("compliance")}>
+                    Ir para step 2 - CNH e conformidade
+                  </button>
+                </div>
               ) : null}
               <div className="driver-editor-content">
                 <div className="driver-editor-sections">
@@ -1599,7 +1775,7 @@ export function DriverProfileEditorSaas({ mode, initialDriver }: DriverProfileEd
                   onActiveChange={(value) => updateDriverField("isActive", value)}
                   onPhotoUrlChange={setDriverPhotoUrl}
                   onAddressChange={setAddress}
-                  onOperationalStatusChange={(value) => updateDriverField("operationalStatus", value)}
+                  onOperationalStatusChange={handleOperationalStatusChange}
                   onResetPasswordStart={() => setIsResettingPassword(true)}
                   onPasswordChange={(value) => updateDriverField("password", value)}
                   onConfirmPasswordChange={(value) => updateDriverField("confirmPassword", value)}
@@ -1611,6 +1787,7 @@ export function DriverProfileEditorSaas({ mode, initialDriver }: DriverProfileEd
                     email={driverForm.email}
                     emergencyContacts={emergencyContacts}
                     minimumEmergencyContacts={minimumEmergencyContactsRequired}
+                    highlightEmergencyRequirement={contactStepBlockedAttempt}
                     onPhoneChange={handlePhoneChange}
                     onEmailChange={(value) => updateDriverField("email", value)}
                     onEmergencyContactsChange={setEmergencyContacts}
@@ -1620,6 +1797,7 @@ export function DriverProfileEditorSaas({ mode, initialDriver }: DriverProfileEd
                     activeSection={activeSection}
                     driverLicense={driverLicense}
                     toxicology={toxicology}
+                    additionalDocuments={additionalDocuments}
                     complianceHistory={complianceHistory}
                     onDriverLicenseChange={(value) => {
                       setDriverLicense(value);
@@ -1636,6 +1814,7 @@ export function DriverProfileEditorSaas({ mode, initialDriver }: DriverProfileEd
                         ...current
                       ]);
                     }}
+                    onAdditionalDocumentsChange={setAdditionalDocuments}
                     onToxicologyChange={(value) => {
                       setToxicology(value);
                       setComplianceHistory((current) => [
@@ -1664,11 +1843,9 @@ export function DriverProfileEditorSaas({ mode, initialDriver }: DriverProfileEd
 
                   <DriverProfileEditorOperationSection
                   activeSection={activeSection}
-                  driverType={driverForm.driverType}
                   contractProfile={contractProfile}
                   journey={journey}
                   contract={contract}
-                  onOpenContractsSection={() => setActiveSection("contracts")}
                   isGeneratingContract={isGeneratingContract}
                   isRequestingSignature={isRequestingSignature}
                   isActivatingContract={isActivatingContract}
@@ -1683,38 +1860,9 @@ export function DriverProfileEditorSaas({ mode, initialDriver }: DriverProfileEd
                   onJourneyChange={setJourney}
                   onContractChange={setContract}
                   effectiveCompensationLabel={effectiveCompensationLabel}
-                  customModel={compensationForm.customModel}
-                  customValue={compensationForm.customValue}
-                  customNotes={compensationForm.customNotes}
-                  onCustomModelChange={(value) => updateCompensationField("customModel", value)}
-                  onCustomValueChange={(value) => updateCompensationField("customValue", value)}
-                  onCustomNotesChange={(value) => updateCompensationField("customNotes", value)}
+                  companyContractProfiles={companyContractProfileOptions}
+                  companyBenefitOptions={companyBenefitOptions}
                 />
-
-                  <DriverProfileEditorContractsSection
-                    activeSection={activeSection}
-                    mode={mode}
-                    driverId={initialDriver?.id}
-                    driverName={driverForm.name}
-                    driverEmail={driverForm.email}
-                    address={address}
-                    contractProfile={contractProfile}
-                    contract={contract}
-                    journey={journey}
-                    onContractChange={setContract}
-                    isGeneratingContract={isGeneratingContract}
-                    isRenewingContract={isRenewingContract}
-                    isActivatingContract={isActivatingContract}
-                    isRequestingSignature={isRequestingSignature}
-                    isTerminatingContract={isTerminatingContract}
-                    isCreatingEndorsement={isCreatingEndorsement}
-                    onGenerateContract={handleGenerateEmploymentContract}
-                    onRenewContract={handleRenewEmploymentContract}
-                    onActivateContract={handleActivateEmploymentContract}
-                    onRequestSignature={handleRequestEmploymentContractSignature}
-                    onTerminateContract={handleTerminateEmploymentContract}
-                    onCreateEndorsement={handleCreateContractEndorsement}
-                  />
                 </div>
                 <div className="driver-editor-form-footer">
                   {!isSavingDriver && submitRequirementIssues.length > 0 ? (

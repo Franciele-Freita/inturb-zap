@@ -2,15 +2,14 @@
 
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
-import { formatDateTime } from "../lib/api";
+import { request } from "../lib/api";
 import { AdminTableRowActions } from "./admin-table-row-actions";
+import { AdministrativeListPagination } from "./administrative-list-pagination";
 import { SearchIcon } from "./icons/common-icons";
 import {
   JourneyType,
   WorkJourneyTemplate,
-  loadWorkJourneys,
   resolveJourneyTypeLabel,
-  saveWorkJourneys,
   summarizeWorkJourney
 } from "../lib/work-journeys";
 
@@ -23,30 +22,43 @@ export function WorkJourneysPage() {
   const [searchTerm, setSearchTerm] = useState("");
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("ALL");
   const [typeFilter, setTypeFilter] = useState<TypeFilter>("ALL");
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState<number>(10);
   const [pendingId, setPendingId] = useState<string | null>(null);
 
   useEffect(() => {
-    const loaded = loadWorkJourneys();
-    setJourneys(loaded);
+    void loadJourneys();
   }, []);
 
-  function persist(next: WorkJourneyTemplate[]) {
-    const sorted = [...next].sort((a, b) => a.name.localeCompare(b.name, "pt-BR"));
-    setJourneys(sorted);
-    saveWorkJourneys(sorted);
+  async function loadJourneys() {
+    try {
+      const loaded = await request<WorkJourneyTemplate[]>("/admin/work-journeys");
+      setJourneys(loaded);
+      setStatusMessage(null);
+    } catch (error) {
+      setStatusMessage(error instanceof Error ? error.message : "Falha ao carregar jornadas.");
+    }
   }
 
-  function toggleStatus(item: WorkJourneyTemplate) {
+  async function toggleStatus(item: WorkJourneyTemplate) {
     setPendingId(item.id);
-    const updated = journeys.map((journey) =>
-      journey.id === item.id ? { ...journey, isActive: !journey.isActive, updatedAt: new Date().toISOString() } : journey
-    );
-    persist(updated);
-    setStatusMessage(`Jornada "${item.name}" ${item.isActive ? "inativada" : "ativada"}.`);
-    setPendingId(null);
+    try {
+      const updated = await request<WorkJourneyTemplate>(`/admin/work-journeys/${item.id}`, {
+        method: "PATCH",
+        body: JSON.stringify({ isActive: !item.isActive })
+      });
+      setJourneys((current) =>
+        current.map((journey) => (journey.id === updated.id ? updated : journey))
+      );
+      setStatusMessage(`Jornada "${item.name}" ${item.isActive ? "inativada" : "ativada"}.`);
+    } catch (error) {
+      setStatusMessage(error instanceof Error ? error.message : "Falha ao atualizar status da jornada.");
+    } finally {
+      setPendingId(null);
+    }
   }
 
-  function deleteJourney(item: WorkJourneyTemplate) {
+  async function deleteJourney(item: WorkJourneyTemplate) {
     if (typeof window !== "undefined") {
       const confirmed = window.confirm(`Excluir a jornada "${item.name}"?`);
       if (!confirmed) {
@@ -55,10 +67,15 @@ export function WorkJourneysPage() {
     }
 
     setPendingId(item.id);
-    const updated = journeys.filter((journey) => journey.id !== item.id);
-    persist(updated);
-    setStatusMessage(`Jornada "${item.name}" excluida.`);
-    setPendingId(null);
+    try {
+      await request(`/admin/work-journeys/${item.id}`, { method: "DELETE" });
+      setJourneys((current) => current.filter((journey) => journey.id !== item.id));
+      setStatusMessage(`Jornada "${item.name}" excluida.`);
+    } catch (error) {
+      setStatusMessage(error instanceof Error ? error.message : "Falha ao excluir jornada.");
+    } finally {
+      setPendingId(null);
+    }
   }
 
   const filteredJourneys = useMemo(() => {
@@ -78,6 +95,20 @@ export function WorkJourneysPage() {
       return matchesSearch && matchesStatus && matchesType;
     });
   }, [journeys, searchTerm, statusFilter, typeFilter]);
+  const totalPages = useMemo(
+    () => Math.max(1, Math.ceil(filteredJourneys.length / pageSize)),
+    [filteredJourneys.length, pageSize]
+  );
+  const paginatedJourneys = useMemo(() => {
+    const start = (page - 1) * pageSize;
+    return filteredJourneys.slice(start, start + pageSize);
+  }, [filteredJourneys, page, pageSize]);
+
+  useEffect(() => {
+    if (page > totalPages) {
+      setPage(totalPages);
+    }
+  }, [page, totalPages]);
 
   const activeCount = useMemo(() => journeys.filter((item) => item.isActive).length, [journeys]);
   const inactiveCount = Math.max(journeys.length - activeCount, 0);
@@ -99,6 +130,7 @@ export function WorkJourneysPage() {
               setSearchTerm("");
               setStatusFilter("ALL");
               setTypeFilter("ALL");
+              setPage(1);
               setStatusMessage(null);
             }}
           >
@@ -125,7 +157,10 @@ export function WorkJourneysPage() {
               <label className="admin-header-search drivers-inline-search">
                 <input
                   value={searchTerm}
-                  onChange={(event) => setSearchTerm(event.target.value)}
+                  onChange={(event) => {
+                    setSearchTerm(event.target.value);
+                    setPage(1);
+                  }}
                   placeholder="Buscar por nome, descricao ou regra..."
                 />
                 <span className="admin-header-search-icon" aria-hidden="true">
@@ -135,7 +170,10 @@ export function WorkJourneysPage() {
               <select
                 className={hasActiveFilters ? "select drivers-filter-toggle is-active" : "select drivers-filter-toggle"}
                 value={typeFilter}
-                onChange={(event) => setTypeFilter(event.target.value as TypeFilter)}
+                onChange={(event) => {
+                  setTypeFilter(event.target.value as TypeFilter);
+                  setPage(1);
+                }}
               >
                 <option value="ALL">Todos os tipos</option>
                 <option value="FIXED">Fixa</option>
@@ -145,7 +183,10 @@ export function WorkJourneysPage() {
               <select
                 className={hasActiveFilters ? "select drivers-filter-toggle is-active" : "select drivers-filter-toggle"}
                 value={statusFilter}
-                onChange={(event) => setStatusFilter(event.target.value as StatusFilter)}
+                onChange={(event) => {
+                  setStatusFilter(event.target.value as StatusFilter);
+                  setPage(1);
+                }}
               >
                 <option value="ALL">Todos status</option>
                 <option value="ACTIVE">Ativos</option>
@@ -162,13 +203,16 @@ export function WorkJourneysPage() {
                   <th>Tipo</th>
                   <th>Resumo</th>
                   <th>Status</th>
-                  <th>Atualizacao</th>
                   <th>Acoes</th>
                 </tr>
               </thead>
               <tbody>
-                {filteredJourneys.map((journey) => {
+                {paginatedJourneys.map((journey) => {
                   const summary = summarizeWorkJourney(journey);
+                  const dsrSummary = summary.find((item) => item.startsWith("DSR:"));
+                  const summaryPreview = dsrSummary
+                    ? [...summary.slice(0, 2), dsrSummary]
+                    : summary.slice(0, 2);
                   return (
                     <tr key={journey.id}>
                       <td>
@@ -178,21 +222,20 @@ export function WorkJourneysPage() {
                         </div>
                       </td>
                       <td>{resolveJourneyTypeLabel(journey.type)}</td>
-                      <td>{summary.slice(0, 2).join(" | ")}</td>
+                      <td>{summaryPreview.join(" | ")}</td>
                       <td>
                         <span className={journey.isActive ? "status-pill status-pill-success" : "status-pill"}>
                           {journey.isActive ? "Ativa" : "Inativa"}
                         </span>
                       </td>
-                      <td>{formatDateTime(journey.updatedAt)}</td>
                       <td>
                         <AdminTableRowActions
-                          primary={{
-                            id: `${journey.id}_edit`,
-                            label: "Editar",
-                            href: `/administrative/scales/${journey.id}/edit`
-                          }}
                           items={[
+                            {
+                              id: `${journey.id}_edit`,
+                              label: "Editar",
+                              href: `/administrative/scales/${journey.id}/edit`
+                            },
                             {
                               id: `${journey.id}_view`,
                               label: "Visualizar",
@@ -221,15 +264,51 @@ export function WorkJourneysPage() {
             </table>
 
             {filteredJourneys.length === 0 ? (
-              <div className="empty-state">
-                <strong>Nenhuma jornada encontrada.</strong>
-                <p>Cadastre uma jornada para reutilizar em perfis de trabalho.</p>
-                <Link href="/administrative/scales/new" className="button-link">
-                  Criar jornada
-                </Link>
+              <div className="administrative-list-empty-state">
+                {hasActiveFilters ? (
+                  <>
+                    <strong>Nenhuma jornada corresponde aos filtros aplicados.</strong>
+                    <p>Ajuste a busca ou limpe os filtros para visualizar as jornadas.</p>
+                    <div className="administrative-list-empty-state-actions">
+                      <button
+                        type="button"
+                        className="button-link secondary-link"
+                        onClick={() => {
+                          setSearchTerm("");
+                          setStatusFilter("ALL");
+                          setTypeFilter("ALL");
+                          setPage(1);
+                        }}
+                      >
+                        Limpar filtros
+                      </button>
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    <strong>Nenhuma jornada encontrada.</strong>
+                    <p>Cadastre uma jornada para reutilizar em perfis de trabalho.</p>
+                    <div className="administrative-list-empty-state-actions">
+                      <Link href="/administrative/scales/new" className="button-link">
+                        Criar jornada
+                      </Link>
+                    </div>
+                  </>
+                )}
               </div>
             ) : null}
           </div>
+          <AdministrativeListPagination
+            page={page}
+            pageSize={pageSize}
+            totalItems={filteredJourneys.length}
+            label="Paginacao da tabela de jornadas"
+            onPageChange={setPage}
+            onPageSizeChange={(value) => {
+              setPageSize(value);
+              setPage(1);
+            }}
+          />
         </article>
       </section>
     </main>

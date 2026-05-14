@@ -16,10 +16,12 @@ import {
 } from "../rides/types";
 import { RidesService } from "../rides/rides.service";
 import { CreateDriverDto } from "./dto/create-driver.dto";
+import { CreateDriverLeavePeriodDto } from "./dto/create-driver-leave-period.dto";
 import { CreateVehicleDto } from "./dto/create-vehicle.dto";
 import { hashDriverPassword } from "./password.util";
 import { StartFleetVehicleSessionDto } from "./dto/start-fleet-vehicle-session.dto";
 import { UpdateDriverDto } from "./dto/update-driver.dto";
+import { UpdateDriverLeavePeriodDto } from "./dto/update-driver-leave-period.dto";
 import { UpdateVehicleDto } from "./dto/update-vehicle.dto";
 import {
   DriverAddress,
@@ -40,6 +42,8 @@ import {
   DriverFleetVehicleSummary,
   DriverJourney,
   DriverLicense,
+  DriverLeavePeriod,
+  DriverLeavePeriodType,
   FleetAssignmentMode,
   DriverOperationalEligibility,
   DriverOperationalStatus,
@@ -132,7 +136,7 @@ type EmploymentTemplateSelectionInput = {
   templateContent?: string;
 };
 
-type WorkProfileLookupClient = Pick<PrismaService, "workProfileTemplate" | "overtimeTemplate">;
+type WorkProfileLookupClient = Pick<PrismaService, "workProfileTemplate" | "workJourneyTemplate" | "overtimeTemplate">;
 
 type EmploymentContractSignatureRequestInput = {
   signerEmail?: string;
@@ -279,6 +283,97 @@ export class DriversService {
 
     const summaries = await this.buildDriverOperationMeta([driver.id]);
     return this.toDriverProfile(driver, summaries.get(driver.id));
+  }
+
+  async listDriverLeavePeriods(driverId: string): Promise<DriverLeavePeriod[]> {
+    await this.ensureDriverExists(driverId);
+    const periods = await this.prisma.driverLeavePeriod.findMany({
+      where: { driverId },
+      orderBy: [{ startDate: "desc" }, { createdAt: "desc" }]
+    });
+
+    return periods.map((period) => this.toDriverLeavePeriod(period));
+  }
+
+  async createDriverLeavePeriod(
+    driverId: string,
+    input: CreateDriverLeavePeriodDto
+  ): Promise<DriverLeavePeriod> {
+    await this.ensureDriverExists(driverId);
+    const normalized = this.normalizeDriverLeavePeriodInput(input);
+    await this.ensureNoDriverLeavePeriodOverlap(driverId, normalized.startDate, normalized.endDate);
+
+    const period = await this.prisma.driverLeavePeriod.create({
+      data: {
+        driverId,
+        type: normalized.type,
+        startDate: normalized.startDate,
+        endDate: normalized.endDate,
+        reason: normalized.reason ?? null,
+        notes: normalized.notes ?? null
+      }
+    });
+
+    return this.toDriverLeavePeriod(period);
+  }
+
+  async updateDriverLeavePeriod(
+    driverId: string,
+    periodId: string,
+    input: UpdateDriverLeavePeriodDto
+  ): Promise<DriverLeavePeriod> {
+    await this.ensureDriverExists(driverId);
+    const current = await this.prisma.driverLeavePeriod.findFirst({
+      where: {
+        id: periodId,
+        driverId
+      }
+    });
+
+    if (!current) {
+      throw new NotFoundException("Periodo nao encontrado para este motorista.");
+    }
+
+    const normalized = this.normalizeDriverLeavePeriodInput({
+      type: input.type ?? current.type,
+      startDate: input.startDate ?? this.toDateOnly(current.startDate),
+      endDate: input.endDate ?? this.toDateOnly(current.endDate),
+      reason: input.reason === undefined ? current.reason ?? undefined : input.reason,
+      notes: input.notes === undefined ? current.notes ?? undefined : input.notes
+    });
+    await this.ensureNoDriverLeavePeriodOverlap(
+      driverId,
+      normalized.startDate,
+      normalized.endDate,
+      current.id
+    );
+
+    const period = await this.prisma.driverLeavePeriod.update({
+      where: { id: current.id },
+      data: {
+        type: normalized.type,
+        startDate: normalized.startDate,
+        endDate: normalized.endDate,
+        reason: normalized.reason ?? null,
+        notes: normalized.notes ?? null
+      }
+    });
+
+    return this.toDriverLeavePeriod(period);
+  }
+
+  async deleteDriverLeavePeriod(driverId: string, periodId: string): Promise<void> {
+    await this.ensureDriverExists(driverId);
+    const deleted = await this.prisma.driverLeavePeriod.deleteMany({
+      where: {
+        id: periodId,
+        driverId
+      }
+    });
+
+    if (deleted.count === 0) {
+      throw new NotFoundException("Periodo nao encontrado para este motorista.");
+    }
   }
 
   async generateEmploymentContract(
@@ -3265,8 +3360,10 @@ export class DriversService {
       input.acceptsOutsideSchedule === undefined ? undefined : Boolean(input.acceptsOutsideSchedule);
     const availabilityNotes = typeof input.availabilityNotes === "string" ? input.availabilityNotes.trim() : "";
     const accessibility = this.parseAccessibility(input.accessibility);
+    const dsrPolicy = this.parseJourneyDsrPolicy(input.dsrPolicy);
 
     let normalized: DriverJourney = {
+      dsrPolicy,
       shift: shift || undefined,
       scale: scale || undefined,
       scaleType,
@@ -3310,7 +3407,8 @@ export class DriversService {
       (!normalized.daySchedules || normalized.daySchedules.length === 0) &&
       normalized.acceptsOutsideSchedule === undefined &&
       !normalized.availabilityNotes &&
-      !normalized.accessibility
+      !normalized.accessibility &&
+      !normalized.dsrPolicy
     ) {
       return null;
     }
@@ -4043,7 +4141,9 @@ export class DriversService {
           .filter((item): item is NonNullable<typeof item> => item !== null)
       : undefined;
     const accessibility = this.parseAccessibility(input.accessibility);
+    const dsrPolicy = this.parseJourneyDsrPolicy(input.dsrPolicy);
     const parsed: DriverJourney = {
+      dsrPolicy,
       shift: typeof input.shift === "string" ? input.shift : undefined,
       scale: typeof input.scale === "string" ? input.scale : undefined,
       scaleType,
@@ -4090,12 +4190,72 @@ export class DriversService {
       (!parsed.daySchedules || parsed.daySchedules.length === 0) &&
       parsed.acceptsOutsideSchedule === undefined &&
       !parsed.availabilityNotes &&
-      !parsed.accessibility
+      !parsed.accessibility &&
+      !parsed.dsrPolicy
     ) {
       return undefined;
     }
 
     return parsed;
+  }
+
+  private parseJourneyDsrPolicy(value: unknown): DriverJourney["dsrPolicy"] | undefined {
+    if (!this.isRecord(value)) {
+      return undefined;
+    }
+
+    const input = value as Record<string, unknown>;
+    const id = typeof input.id === "string" ? input.id.trim() : "";
+    const name = typeof input.name === "string" ? input.name.trim() : "";
+    const weeklyRestDay =
+      input.weeklyRestDay === "MON" ||
+      input.weeklyRestDay === "TUE" ||
+      input.weeklyRestDay === "WED" ||
+      input.weeklyRestDay === "THU" ||
+      input.weeklyRestDay === "FRI" ||
+      input.weeklyRestDay === "SAT" ||
+      input.weeklyRestDay === "SUN"
+        ? input.weeklyRestDay
+        : undefined;
+    const restMode =
+      input.restMode === "WEEKDAY" || input.restMode === "CYCLE"
+        ? input.restMode
+        : weeklyRestDay
+          ? "WEEKDAY"
+          : undefined;
+    if (!weeklyRestDay && restMode !== "CYCLE") {
+      return undefined;
+    }
+    const cycleWorkDays =
+      typeof input.cycleWorkDays === "number" && Number.isFinite(input.cycleWorkDays)
+        ? Math.min(7, Math.max(1, Math.trunc(input.cycleWorkDays)))
+        : undefined;
+    const cycleOffDays =
+      typeof input.cycleOffDays === "number" && Number.isFinite(input.cycleOffDays)
+        ? Math.min(7, Math.max(1, Math.trunc(input.cycleOffDays)))
+        : undefined;
+
+    const summary =
+      typeof input.summary === "string" && input.summary.trim().length > 0
+        ? input.summary.trim()
+        : undefined;
+
+    return {
+      id: id || "journey-dsr",
+      name: name || "DSR da jornada",
+      summary,
+      restMode,
+      weeklyRestDay,
+      cycleWorkDays: restMode === "CYCLE" ? cycleWorkDays ?? 1 : undefined,
+      cycleOffDays: restMode === "CYCLE" ? cycleOffDays ?? 1 : undefined,
+      reflectOvertime:
+        input.reflectOvertime === undefined ? true : Boolean(input.reflectOvertime),
+      reflectNight: input.reflectNight === undefined ? true : Boolean(input.reflectNight),
+      loseOnUnjustifiedAbsence:
+        input.loseOnUnjustifiedAbsence === undefined
+          ? false
+          : Boolean(input.loseOnUnjustifiedAbsence)
+    };
   }
 
   private parseAccessibility(value: unknown): DriverAccessibility | undefined {
@@ -4352,15 +4512,8 @@ export class DriversService {
     }
 
     if (profile === "MEI") {
-      const meiCnpjDigits = (contract.meiCnpj ?? "").replace(/\D/g, "");
       if (!contract.meiRemunerationModel) {
         throw new BadRequestException("Defina o modelo de remuneracao do MEI.");
-      }
-      if (meiCnpjDigits.length !== 14) {
-        throw new BadRequestException("Informe um CNPJ valido do prestador MEI.");
-      }
-      if (!contract.meiLegalName?.trim()) {
-        throw new BadRequestException("Informe a razao social do prestador MEI.");
       }
       if (!contract.paymentMethod) {
         throw new BadRequestException("Defina a forma de pagamento do MEI.");
@@ -5391,7 +5544,7 @@ export class DriversService {
       }
     }
 
-    throw new NotFoundException("Link de assinatura invalido ou expirado.");
+    throw new NotFoundException("Link invalido ou nao encontrado.");
   }
 
   private buildPublicSignatureSession(
@@ -5636,6 +5789,64 @@ IP: ${input.signerIp || "nao informado"}
     return undefined;
   }
 
+  private resetWorkProfileDrivenContractFields(contract: DriverContract): void {
+    contract.salaryModel = undefined;
+    contract.fixedSalary = undefined;
+    contract.commissionType = undefined;
+    contract.commissionApplyOn = undefined;
+    contract.commissionPercent = undefined;
+    contract.commissionPerRide = undefined;
+
+    contract.intermittentStatus = undefined;
+    contract.intermittentConvocationMode = undefined;
+    contract.intermittentNoticeHours = undefined;
+    contract.intermittentConvocationNotes = undefined;
+    contract.intermittentPaymentMode = undefined;
+    contract.intermittentDailyRate = undefined;
+    contract.intermittentRideCompensationType = undefined;
+    contract.intermittentRideAmount = undefined;
+    contract.intermittentRidePercent = undefined;
+    contract.intermittentPreferredWeekDays = undefined;
+    contract.workedPeriods = undefined;
+    contract.intermittentPreferredDays = undefined;
+
+    contract.meiRemunerationModel = undefined;
+    contract.meiCommissionBase = undefined;
+    contract.meiCommissionPercent = undefined;
+    contract.meiPerRideAmount = undefined;
+    contract.meiRevenueSharePercent = undefined;
+    contract.meiRevenueShareBase = undefined;
+    contract.meiFixedBaseAmount = undefined;
+    contract.meiVariableType = undefined;
+    contract.meiVariablePercent = undefined;
+    contract.meiVariableAmount = undefined;
+    contract.meiVariableBase = undefined;
+    contract.meiWorkMode = undefined;
+    contract.meiOperationVehicleMode = undefined;
+    contract.meiFuelResponsibility = undefined;
+    contract.meiMaintenanceResponsibility = undefined;
+    contract.meiPreferredWeekDays = undefined;
+
+    contract.paymentMethod = undefined;
+    contract.paymentFrequency = undefined;
+
+    contract.overtimeUseGlobalPolicy = undefined;
+    contract.overtimeEnabled = undefined;
+    contract.overtimePolicyMode = undefined;
+    contract.overtimeDailyLimitHours = undefined;
+    contract.overtimeWeeklyLimitHours = undefined;
+    contract.overtimeAfterDailyHours = undefined;
+    contract.overtimeAfterWeeklyHours = undefined;
+    contract.overtimeMultiplier50 = undefined;
+    contract.overtimeMultiplier100 = undefined;
+    contract.overtimeNightMultiplier = undefined;
+    contract.overtimeRoundingMinutes = undefined;
+
+    contract.benefitsList = undefined;
+    contract.otherBenefits = undefined;
+    contract.benefits = undefined;
+  }
+
   private applyWorkProfileRemunerationToCltContract(
     contract: DriverContract,
     remuneration: Record<string, unknown>
@@ -5732,6 +5943,67 @@ IP: ${input.signerIp || "nao informado"}
     }
   }
 
+  private applyWorkProfileRemunerationToMeiContract(
+    contract: DriverContract,
+    remuneration: Record<string, unknown>
+  ): void {
+    const model =
+      remuneration.model === "FIXED" ||
+      remuneration.model === "FIXED_PLUS_COMMISSION" ||
+      remuneration.model === "COMMISSION_ONLY"
+        ? remuneration.model
+        : undefined;
+    const fixedSalary = this.normalizeDecimalField(remuneration.fixedSalary);
+    const commissionType =
+      remuneration.commissionType === "PERCENT" || remuneration.commissionType === "PER_RIDE"
+        ? remuneration.commissionType
+        : undefined;
+    const commissionValue = this.normalizeDecimalField(remuneration.commissionValue);
+
+    contract.paymentMethod = contract.paymentMethod ?? "PIX";
+    contract.paymentFrequency = contract.paymentFrequency ?? "SEMANAL";
+    contract.meiWorkMode = contract.meiWorkMode ?? "ON_DEMAND";
+    contract.meiOperationVehicleMode = contract.meiOperationVehicleMode ?? "OWN_VEHICLE";
+    contract.meiFuelResponsibility = contract.meiFuelResponsibility ?? "DRIVER";
+    contract.meiMaintenanceResponsibility = contract.meiMaintenanceResponsibility ?? "DRIVER";
+    contract.meiCommissionBase = contract.meiCommissionBase ?? "RIDE";
+    contract.meiRevenueShareBase = contract.meiRevenueShareBase ?? "RIDE_GROSS";
+    contract.meiVariableBase = contract.meiVariableBase ?? "RIDE";
+
+    if (!model) {
+      return;
+    }
+
+    if (model === "FIXED") {
+      contract.meiRemunerationModel = "PER_RIDE_FIXED";
+      contract.meiPerRideAmount = this.hasPositiveNumber(fixedSalary) ? fixedSalary : undefined;
+      return;
+    }
+
+    if (model === "COMMISSION_ONLY") {
+      if (commissionType === "PER_RIDE") {
+        contract.meiRemunerationModel = "PER_RIDE_FIXED";
+        contract.meiPerRideAmount = this.hasPositiveNumber(commissionValue) ? commissionValue : undefined;
+        return;
+      }
+
+      contract.meiRemunerationModel = "COMMISSION_PERCENT";
+      contract.meiCommissionPercent = this.hasPositiveNumber(commissionValue) ? commissionValue : undefined;
+      return;
+    }
+
+    contract.meiRemunerationModel = "FIXED_PLUS_VARIABLE";
+    contract.meiFixedBaseAmount = this.hasPositiveNumber(fixedSalary) ? fixedSalary : undefined;
+    if (commissionType === "PER_RIDE") {
+      contract.meiVariableType = "AMOUNT";
+      contract.meiVariableAmount = this.hasPositiveNumber(commissionValue) ? commissionValue : undefined;
+      return;
+    }
+
+    contract.meiVariableType = "PERCENT";
+    contract.meiVariablePercent = this.hasPositiveNumber(commissionValue) ? commissionValue : undefined;
+  }
+
   private applyOvertimeTemplateSettingsToCltContract(
     contract: DriverContract,
     overtimeSettings: Record<string, unknown>,
@@ -5771,7 +6043,6 @@ IP: ${input.signerIp || "nao informado"}
       overtime.destination === "BANK_HOURS" || overtime.destination === "BOTH" ? "BANK_HOURS" : "PAID";
     const overtime50 = this.normalizeDecimalField(percentages.overtime50);
     const overtime100 = this.normalizeDecimalField(percentages.overtime100);
-    const nightAdditional = this.normalizeDecimalField(percentages.nightAdditionalPercent);
 
     contract.overtimeEnabled = overtimeEnabled;
     if (!overtimeEnabled) {
@@ -5796,8 +6067,7 @@ IP: ${input.signerIp || "nao informado"}
       overtime50 === undefined ? 1.5 : Number((1 + overtime50 / 100).toFixed(4));
     contract.overtimeMultiplier100 =
       overtime100 === undefined ? 2 : Number((1 + overtime100 / 100).toFixed(4));
-    contract.overtimeNightMultiplier =
-      nightAdditional === undefined ? 1.2 : Number((1 + nightAdditional / 100).toFixed(4));
+    contract.overtimeNightMultiplier = undefined;
     contract.overtimeRoundingMinutes = this.normalizeIntegerField(rounding.intervalMinutes, 1) ?? 15;
   }
 
@@ -5823,6 +6093,7 @@ IP: ${input.signerIp || "nao informado"}
         name: true,
         isActive: true,
         contractType: true,
+        journeyTemplateId: true,
         journeySummary: true,
         remuneration: true,
         usesOvertime: true,
@@ -5892,6 +6163,11 @@ IP: ${input.signerIp || "nao informado"}
           `A politica de hora extra do perfil \"${workProfile.name}\" nao esta disponivel para uso.`
         );
       }
+      if (this.resolveOvertimeTemplatePolicyCategory(overtimeTemplate.settings) !== "OVERTIME") {
+        throw new BadRequestException(
+          `A politica vinculada ao perfil \"${workProfile.name}\" pertence ao modulo de adicional noturno. Selecione uma politica de hora extra.`
+        );
+      }
 
       overtimeSettings = this.isRecord(overtimeTemplate.settings)
         ? (overtimeTemplate.settings as Record<string, unknown>)
@@ -5917,6 +6193,8 @@ IP: ${input.signerIp || "nao informado"}
       benefitsList: benefitNames.length > 0 ? benefitNames : undefined,
       otherBenefits: undefined
     };
+    this.resetWorkProfileDrivenContractFields(nextContract);
+    nextContract.benefitsList = benefitNames.length > 0 ? benefitNames : undefined;
 
     if (inheritedProfile === "CLT") {
       this.applyWorkProfileRemunerationToCltContract(nextContract, remuneration);
@@ -5927,11 +6205,250 @@ IP: ${input.signerIp || "nao informado"}
       this.applyWorkProfileRemunerationToIntermittentContract(nextContract, remuneration);
     }
 
+    if (inheritedProfile === "MEI") {
+      this.applyWorkProfileRemunerationToMeiContract(nextContract, remuneration);
+    }
+
+    const inheritedJourney = await this.resolveWorkProfileJourneyFromTemplate(db, {
+      workProfileName: workProfile.name,
+      journeyTemplateId: workProfile.journeyTemplateId
+    });
+    const journeyAccessibilityPatch =
+      journey?.accessibility !== undefined
+        ? ({
+            accessibility: journey.accessibility
+          } as DriverJourney)
+        : undefined;
+    const nextJourney = inheritedJourney
+      ? this.mergeJourneySettings(inheritedJourney, journeyAccessibilityPatch)
+      : journey;
+
     return {
       profile: inheritedProfile,
       contract: nextContract,
-      journey
+      journey: nextJourney
     };
+  }
+
+  private async resolveWorkProfileJourneyFromTemplate(
+    db: WorkProfileLookupClient,
+    input: {
+      workProfileName: string;
+      journeyTemplateId?: string | null;
+    }
+  ): Promise<DriverJourney | undefined> {
+    const journeyTemplateId =
+      typeof input.journeyTemplateId === "string" ? input.journeyTemplateId.trim() : "";
+    if (!journeyTemplateId) {
+      return undefined;
+    }
+
+    const template = await db.workJourneyTemplate.findUnique({
+      where: { id: journeyTemplateId },
+      select: {
+        id: true,
+        name: true,
+        isActive: true,
+        type: true,
+        allowedDays: true,
+        fixedConfig: true,
+        flexibleConfig: true,
+        intermittentConfig: true,
+        dsrEnabled: true,
+        dsrWeeklyRestDay: true,
+        dsrReflectOvertime: true,
+        dsrReflectNight: true,
+        dsrLoseOnUnjustifiedAbsence: true,
+        dsrDescription: true
+      }
+    });
+
+    if (!template || !template.isActive) {
+      throw new BadRequestException(
+        `A jornada vinculada ao perfil "${input.workProfileName}" nao esta disponivel para uso.`
+      );
+    }
+
+    const allowedDays = this.normalizeWorkJourneyTemplateDays(template.allowedDays);
+    const journeyType = this.normalizeWorkJourneyTemplateType(template.type);
+    const fixedConfigForDsr = this.isRecord(template.fixedConfig)
+      ? (template.fixedConfig as Record<string, unknown>)
+      : undefined;
+    const fixedScaleTypeForDsr =
+      fixedConfigForDsr && typeof fixedConfigForDsr.scaleType === "string"
+        ? fixedConfigForDsr.scaleType.trim().toUpperCase()
+        : "";
+    const isCycleDsr = !template.dsrWeeklyRestDay && fixedScaleTypeForDsr === "TWELVE_THIRTY_SIX";
+    const cycleWorkDays =
+      isCycleDsr && typeof fixedConfigForDsr?.cycleWorkDays === "number" && Number.isFinite(fixedConfigForDsr.cycleWorkDays)
+        ? Math.min(7, Math.max(1, Math.trunc(fixedConfigForDsr.cycleWorkDays)))
+        : 1;
+    const cycleOffDays =
+      isCycleDsr && typeof fixedConfigForDsr?.cycleOffDays === "number" && Number.isFinite(fixedConfigForDsr.cycleOffDays)
+        ? Math.min(7, Math.max(1, Math.trunc(fixedConfigForDsr.cycleOffDays)))
+        : 1;
+    const dsrPolicySnapshot = template.dsrEnabled && (template.dsrWeeklyRestDay || isCycleDsr)
+      ? {
+          id: `journey-dsr-${template.id}`,
+          name: "DSR da jornada",
+          summary: [
+            isCycleDsr
+              ? `Descanso ciclo ${cycleWorkDays}x${cycleOffDays}`
+              : `Descanso ${template.dsrWeeklyRestDay}`,
+            `Reflete HE: ${template.dsrReflectOvertime ? "sim" : "nao"}`,
+            `Reflete noturno: ${template.dsrReflectNight ? "sim" : "nao"}`,
+            template.dsrLoseOnUnjustifiedAbsence ? "Perde por falta injustificada" : undefined,
+            template.dsrDescription?.trim() || undefined
+          ]
+            .filter((item): item is string => Boolean(item))
+            .join(" | "),
+          restMode: isCycleDsr ? "CYCLE" : "WEEKDAY",
+          weeklyRestDay: template.dsrWeeklyRestDay ?? undefined,
+          cycleWorkDays: isCycleDsr ? cycleWorkDays : undefined,
+          cycleOffDays: isCycleDsr ? cycleOffDays : undefined,
+          reflectOvertime: template.dsrReflectOvertime,
+          reflectNight: template.dsrReflectNight,
+          loseOnUnjustifiedAbsence: template.dsrLoseOnUnjustifiedAbsence
+        }
+      : undefined;
+    if (!journeyType) {
+      throw new BadRequestException(
+        `A jornada "${template.name}" vinculada ao perfil "${input.workProfileName}" possui tipo invalido.`
+      );
+    }
+
+    if (journeyType === "FIXED") {
+      const fixedConfig = this.isRecord(template.fixedConfig)
+        ? (template.fixedConfig as Record<string, unknown>)
+        : {};
+      const activeDays = this.normalizeWorkJourneyTemplateDays(
+        fixedConfig.activeDays ?? template.allowedDays
+      );
+      const rawScaleType =
+        typeof fixedConfig.scaleType === "string" ? fixedConfig.scaleType.trim().toUpperCase() : "";
+      const scaleType: DriverJourney["scaleType"] =
+        rawScaleType === "FIVE_TWO" ||
+        rawScaleType === "SIX_ONE" ||
+        rawScaleType === "TWELVE_THIRTY_SIX" ||
+        rawScaleType === "CUSTOM"
+          ? rawScaleType
+          : undefined;
+      const customScaleWorkDays =
+        scaleType === "CUSTOM" && activeDays.length > 0 ? activeDays.length : undefined;
+      const customScaleOffDays =
+        scaleType === "CUSTOM" && activeDays.length > 0 ? Math.max(0, 7 - activeDays.length) : undefined;
+      const mapped = this.parseJourney({
+        shift: "FIXO",
+        scaleType,
+        scale: this.resolveJourneyScaleLabel(scaleType, activeDays),
+        customScaleWorkDays,
+        customScaleOffDays,
+        fixedSchedule: true,
+        fixedScheduleMode: "UNIFORM",
+        startTime: this.normalizeWorkJourneyTemplateClock(fixedConfig.startTime),
+        endTime: this.normalizeWorkJourneyTemplateClock(fixedConfig.endTime),
+        availableDays: activeDays.length > 0 ? activeDays : allowedDays,
+        dsrPolicy: dsrPolicySnapshot
+      });
+      return mapped ?? undefined;
+    }
+
+    if (journeyType === "FLEXIBLE") {
+      const flexibleConfig = this.isRecord(template.flexibleConfig)
+        ? (template.flexibleConfig as Record<string, unknown>)
+        : {};
+      const mapped = this.parseJourney({
+        shift: "FLEXIVEL",
+        scale: "VARIAVEL",
+        fixedSchedule: false,
+        availabilityStartTime: this.normalizeWorkJourneyTemplateClock(flexibleConfig.entryWindowStart),
+        availabilityEndTime: this.normalizeWorkJourneyTemplateClock(flexibleConfig.exitWindowEnd),
+        availableDays: allowedDays,
+        dsrPolicy: dsrPolicySnapshot
+      });
+      return mapped ?? undefined;
+    }
+
+    const intermittentConfig = this.isRecord(template.intermittentConfig)
+      ? (template.intermittentConfig as Record<string, unknown>)
+      : {};
+    const callDays = this.normalizeWorkJourneyTemplateDays(
+      intermittentConfig.callDays ?? template.allowedDays
+    );
+    const mapped = this.parseJourney({
+      shift: "INTERMITENTE",
+      scale: "CONVOCACAO",
+      fixedSchedule: false,
+      availabilityStartTime: this.normalizeWorkJourneyTemplateClock(intermittentConfig.allowedStartTime),
+      availabilityEndTime: this.normalizeWorkJourneyTemplateClock(intermittentConfig.allowedEndTime),
+      availableDays: callDays.length > 0 ? callDays : allowedDays,
+      acceptsOutsideSchedule:
+        intermittentConfig.allowMultipleCallsPerDay === undefined
+          ? true
+          : Boolean(intermittentConfig.allowMultipleCallsPerDay),
+      dsrPolicy: dsrPolicySnapshot
+    });
+    return mapped ?? undefined;
+  }
+
+  private normalizeWorkJourneyTemplateType(value: unknown): "FIXED" | "FLEXIBLE" | "INTERMITTENT" | undefined {
+    if (typeof value !== "string") {
+      return undefined;
+    }
+    const normalized = value.trim().toUpperCase();
+    if (normalized === "FIXED" || normalized === "FLEXIBLE" || normalized === "INTERMITTENT") {
+      return normalized;
+    }
+    return undefined;
+  }
+
+  private normalizeWorkJourneyTemplateDays(value: unknown): JourneyWeekDay[] {
+    if (!Array.isArray(value)) {
+      return [];
+    }
+
+    const normalizedDays = value
+      .filter((item): item is string => typeof item === "string")
+      .map((item) => item.trim().toUpperCase())
+      .filter(
+        (item): item is JourneyWeekDay =>
+          item === "MON" ||
+          item === "TUE" ||
+          item === "WED" ||
+          item === "THU" ||
+          item === "FRI" ||
+          item === "SAT" ||
+          item === "SUN"
+      );
+
+    return [...new Set(normalizedDays)];
+  }
+
+  private normalizeWorkJourneyTemplateClock(value: unknown): string | undefined {
+    if (typeof value !== "string") {
+      return undefined;
+    }
+    const normalized = value.trim();
+    return /^\d{2}:\d{2}$/.test(normalized) ? normalized : undefined;
+  }
+
+  private resolveJourneyScaleLabel(
+    scaleType?: DriverJourney["scaleType"],
+    activeDays?: JourneyWeekDay[]
+  ): string | undefined {
+    if (scaleType === "FIVE_TWO") {
+      return "5x2";
+    }
+    if (scaleType === "SIX_ONE") {
+      return "6x1";
+    }
+    if (scaleType === "TWELVE_THIRTY_SIX") {
+      return "12x36";
+    }
+    if (scaleType === "CUSTOM" && Array.isArray(activeDays) && activeDays.length > 0) {
+      return `${activeDays.length}x${Math.max(0, 7 - activeDays.length)}`;
+    }
+    return undefined;
   }
 
   private mergeJourneySettings(base?: DriverJourney, patch?: DriverJourney): DriverJourney | undefined {
@@ -6486,8 +7003,120 @@ IP: ${input.signerIp || "nao informado"}
     return parsed;
   }
 
+  private normalizeDriverLeavePeriodInput(input: {
+    type: "VACATION" | "LEAVE" | "SUSPENSION";
+    startDate: string;
+    endDate: string;
+    reason?: string;
+    notes?: string;
+  }): {
+    type: DriverLeavePeriodType;
+    startDate: Date;
+    endDate: Date;
+    reason?: string;
+    notes?: string;
+  } {
+    const type =
+      input.type === "VACATION" || input.type === "LEAVE" || input.type === "SUSPENSION"
+        ? input.type
+        : undefined;
+    if (!type) {
+      throw new BadRequestException("Tipo de periodo invalido.");
+    }
+
+    const startDate = this.parseDateOnlyValue(input.startDate, "Data inicial do periodo invalida.");
+    const endDate = this.parseDateOnlyValue(input.endDate, "Data final do periodo invalida.");
+    if (endDate.getTime() < startDate.getTime()) {
+      throw new BadRequestException("Data final deve ser igual ou posterior a data inicial.");
+    }
+
+    const reason = this.normalizeOptional(input.reason ?? undefined) ?? undefined;
+    const notes = this.normalizeOptional(input.notes ?? undefined) ?? undefined;
+
+    return {
+      type,
+      startDate,
+      endDate,
+      reason,
+      notes
+    };
+  }
+
+  private parseDateOnlyValue(value: string, message: string): Date {
+    const normalized = value.trim();
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(normalized)) {
+      throw new BadRequestException(message);
+    }
+
+    const parsed = new Date(`${normalized}T12:00:00.000Z`);
+    if (Number.isNaN(parsed.getTime())) {
+      throw new BadRequestException(message);
+    }
+
+    return parsed;
+  }
+
+  private async ensureNoDriverLeavePeriodOverlap(
+    driverId: string,
+    startDate: Date,
+    endDate: Date,
+    excludeId?: string
+  ): Promise<void> {
+    const overlap = await this.prisma.driverLeavePeriod.findFirst({
+      where: {
+        driverId,
+        ...(excludeId ? { id: { not: excludeId } } : {}),
+        startDate: {
+          lte: endDate
+        },
+        endDate: {
+          gte: startDate
+        }
+      },
+      select: { id: true }
+    });
+
+    if (overlap) {
+      throw new BadRequestException(
+        "Ja existe um periodo de afastamento/ferias sobreposto para este motorista."
+      );
+    }
+  }
+
+  private toDriverLeavePeriod(period: {
+    id: string;
+    driverId: string;
+    type: DriverLeavePeriodType;
+    startDate: Date;
+    endDate: Date;
+    reason: string | null;
+    notes: string | null;
+    createdAt: Date;
+    updatedAt: Date;
+  }): DriverLeavePeriod {
+    return {
+      id: period.id,
+      driverId: period.driverId,
+      type: period.type,
+      startDate: this.toDateOnly(period.startDate),
+      endDate: this.toDateOnly(period.endDate),
+      reason: period.reason ?? undefined,
+      notes: period.notes ?? undefined,
+      createdAt: period.createdAt.toISOString(),
+      updatedAt: period.updatedAt.toISOString()
+    };
+  }
+
   private isRecord(value: unknown): value is Record<string, unknown> {
     return typeof value === "object" && value !== null && !Array.isArray(value);
+  }
+
+  private resolveOvertimeTemplatePolicyCategory(value: unknown): "OVERTIME" | "NIGHT" {
+    if (!this.isRecord(value)) {
+      return "OVERTIME";
+    }
+
+    return value.policyCategory === "NIGHT" ? "NIGHT" : "OVERTIME";
   }
 
   private normalizePhone(value: string): string {

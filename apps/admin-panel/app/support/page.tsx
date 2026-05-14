@@ -1,223 +1,355 @@
-"use client";
+﻿"use client";
 
 import Link from "next/link";
-import { useMemo, useState } from "react";
-import { formatDateTime } from "../../lib/api";
+import { useRouter } from "next/navigation";
+import { useEffect, useMemo, useState } from "react";
 import { SearchIcon } from "../../components/icons/common-icons";
+import { getStoredAdminSession } from "../../lib/admin-auth";
 import {
-  mockSupportCases,
-  supportPriorityLabel,
+  getSlaRiskClassName,
+  isTicketOpen,
+  resolveSlaView,
+  supportPriorityMeta,
   supportStatusMeta,
-  supportStatusOrder,
-  supportTypeLabel,
-  type SupportCase,
-  type SupportCasePriority
+  supportTypeFilterOrder,
+  supportTypeMeta,
+  type SupportTicket,
+  type SupportTypeFilter
 } from "./support-shared";
+import { subscribeSupportTickets, supportService, type SupportActor } from "./support-service";
 
-export default function SupportPage() {
+export default function SupportDashboardPage() {
+  const router = useRouter();
+
   const [searchTerm, setSearchTerm] = useState("");
-  const [activeStatus, setActiveStatus] = useState<"NEW" | "IN_PROGRESS" | "WAITING" | "RESOLVED">("NEW");
+  const [typeFilter, setTypeFilter] = useState<SupportTypeFilter>("ALL");
+  const [tickets, setTickets] = useState<SupportTicket[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [busyTicketId, setBusyTicketId] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const typeFilters: SupportTypeFilter[] =
+    Array.isArray(supportTypeFilterOrder) && supportTypeFilterOrder.length > 0
+      ? supportTypeFilterOrder
+      : ["ALL", "RIDE", "CUSTOMER", "DRIVER", "INTERNAL"];
 
-  const filteredCases = useMemo(() => {
-    const normalizedSearch = searchTerm.trim().toLowerCase();
+  useEffect(() => {
+    setTickets(supportService.listTickets());
+    setIsLoading(false);
 
-    if (!normalizedSearch) {
-      return mockSupportCases;
+    return subscribeSupportTickets(() => {
+      setTickets(supportService.listTickets());
+    });
+  }, []);
+
+  const openTickets = useMemo(() => tickets.filter((ticket) => isTicketOpen(ticket)), [tickets]);
+
+  const searchedTickets = useMemo(() => {
+    const normalized = searchTerm.trim().toLowerCase();
+    if (!normalized) {
+      return openTickets;
     }
 
-    return mockSupportCases.filter((supportCase) =>
+    return openTickets.filter((ticket) =>
       [
-        supportCase.title,
-        supportCase.summary,
-        supportCase.reason,
-        supportCase.source,
-        supportCase.assignedTo ?? "",
-        supportCase.customer?.name ?? "",
-        supportCase.customer?.phone ?? "",
-        supportCase.driver?.name ?? "",
-        supportCase.driver?.phone ?? "",
-        supportCase.ride?.id ?? "",
-        supportCase.ride?.origin ?? "",
-        supportCase.ride?.destination ?? "",
-        ...supportCase.internalNotes
+        ticket.code,
+        ticket.title,
+        ticket.summary,
+        ticket.description,
+        ticket.assignee ?? "",
+        ticket.requester.name,
+        ticket.requester.phone ?? "",
+        ticket.relatedRideId ?? "",
+        ticket.relatedDriverId ?? "",
+        ticket.relatedCustomerId ?? "",
+        ticket.tags.join(" ")
       ]
         .join(" ")
         .toLowerCase()
-        .includes(normalizedSearch)
+        .includes(normalized)
     );
-  }, [searchTerm]);
+  }, [openTickets, searchTerm]);
 
-  const openCases = filteredCases.filter((supportCase) => supportCase.status !== "RESOLVED").length;
-  const criticalCases = filteredCases.filter((supportCase) => supportCase.priority === "CRITICAL").length;
-  const waitingCases = filteredCases.filter((supportCase) => supportCase.status === "WAITING").length;
-  const assignedCases = filteredCases.filter((supportCase) => Boolean(supportCase.assignedTo)).length;
-  const casesInActiveStatus = filteredCases.filter((supportCase) => supportCase.status === activeStatus);
-  const activeStatusMeta = supportStatusMeta[activeStatus];
+  const queueTickets = useMemo(() => {
+    if (typeFilter === "ALL") {
+      return searchedTickets;
+    }
+    return searchedTickets.filter((ticket) => ticket.type === typeFilter);
+  }, [searchedTickets, typeFilter]);
+  const currentActor = resolveCurrentActor();
+
+  const typeCounts = useMemo(() => {
+    return typeFilters.reduce<Record<SupportTypeFilter, number>>((accumulator, filter) => {
+      if (filter === "ALL") {
+        accumulator.ALL = openTickets.length;
+      } else {
+        accumulator[filter] = openTickets.filter((ticket) => ticket.type === filter).length;
+      }
+      return accumulator;
+    }, { ALL: 0, RIDE: 0, CUSTOMER: 0, DRIVER: 0, INTERNAL: 0 });
+  }, [openTickets, typeFilters]);
+
+  const kpis = useMemo(
+    () => ({
+      newCount: openTickets.filter((ticket) => ticket.status === "NEW").length,
+      criticalCount: openTickets.filter((ticket) => ticket.priority === "CRITICAL").length,
+      waitingCount: openTickets.filter(
+        (ticket) => ticket.status === "WAITING_CUSTOMER" || ticket.status === "WAITING_DRIVER"
+      ).length
+    }),
+    [openTickets]
+  );
+
+  async function handleClaimAndOpen(ticketId: string) {
+    setBusyTicketId(ticketId);
+    setError(null);
+    try {
+      supportService.claimTicket(ticketId, currentActor);
+      router.push(`/support/${ticketId}`);
+    } catch (claimError) {
+      setError(claimError instanceof Error ? claimError.message : "Falha ao assumir ticket.");
+    } finally {
+      setBusyTicketId(null);
+    }
+  }
 
   return (
-    <main className="page-shell support-page-shell">
-      <section className="support-queue-hero">
-        <div className="support-queue-hero-copy">
-          <h1>Central de Suporte</h1>
-          <p>Fila unica de atendimento para clientes, motoristas, corridas e ocorrencias operacionais.</p>
+    <main className="page-shell page-shell-wide cargo-list-page-shell support-v2-page-shell">
+      <section className="cargo-list-page-header">
+        <div className="cargo-list-page-header-copy">
+          <h1>Atendimento</h1>
+          <p>Central de suporte para clientes e motoristas.</p>
         </div>
 
-        <label className="admin-header-search support-queue-search">
-          <input
-            value={searchTerm}
-            onChange={(event) => setSearchTerm(event.target.value)}
-            placeholder="Buscar por nome, motivo, corrida ou responsavel..."
-          />
-          <span className="admin-header-search-icon" aria-hidden="true">
-            <SearchIcon />
-          </span>
-        </label>
+        <div className="cargo-list-page-header-actions">
+          <button
+            type="button"
+            className="button-link secondary-link"
+            onClick={() => {
+              setSearchTerm("");
+              setTypeFilter("ALL");
+            }}
+          >
+            Limpar filtros
+          </button>
+          <button type="button" className="button-link secondary-link" onClick={() => setTickets(supportService.listTickets())}>
+            Atualizar fila
+          </button>
+        </div>
       </section>
 
-      <section className="support-queue-metrics">
-        <article className="support-queue-metric">
-          <span>Abertos</span>
-          <strong>{openCases}</strong>
-        </article>
-        <article className="support-queue-metric">
-          <span>Criticos</span>
-          <strong>{criticalCases}</strong>
-        </article>
-        <article className="support-queue-metric">
-          <span>Aguardando retorno</span>
-          <strong>{waitingCases}</strong>
-        </article>
-        <article className="support-queue-metric">
-          <span>Com responsavel</span>
-          <strong>{assignedCases}</strong>
-        </article>
-      </section>
-
-      <section className="support-queue-panel">
-        <div className="support-tabs" role="tablist" aria-label="Status dos atendimentos">
-          {supportStatusOrder.map((status) => (
-            <button
-              key={status}
-              type="button"
-              className={activeStatus === status ? "support-tab is-active" : "support-tab"}
-              onClick={() => setActiveStatus(status)}
-            >
-              {supportStatusMeta[status].label}
-              <span className="support-tab-count">{filteredCases.filter((supportCase) => supportCase.status === status).length}</span>
-            </button>
-          ))}
-        </div>
-
-        <div className="support-active-status-head">
-          <div>
-            <h2>{activeStatusMeta.label}</h2>
-            <p>{activeStatusMeta.description}</p>
-          </div>
-          <span className="support-column-count">{casesInActiveStatus.length}</span>
-        </div>
-
-        <div className="support-ticket-list">
-          {casesInActiveStatus.map((supportCase) => (
-            <Link key={supportCase.id} href={`/support/${supportCase.id}`} className="support-case-card">
-              <div className="support-case-card-top">
-                <div className="support-case-card-ticket">
-                  <span>Ticket</span>
-                  <strong>{supportCase.ticketNumber}</strong>
-                </div>
-                <div className="chips">
-                  <span className="chip chip-soft">{supportTypeLabel[supportCase.type]}</span>
-                  <span className={getPriorityClassName(supportCase.priority)}>{supportPriorityLabel[supportCase.priority]}</span>
-                </div>
-              </div>
-
-              <div className="support-case-card-copy">
-                <strong>{supportCase.title}</strong>
-                <p>{supportCase.summary}</p>
-              </div>
-
-              <div className="support-case-card-meta">
-                <span>{buildCaseAnchorLabel(supportCase)}</span>
-                <span>{supportCase.assignedTo ? `Responsavel: ${supportCase.assignedTo}` : "Sem responsavel"}</span>
-              </div>
-
-              <div className="support-case-card-timeline">
-                <div className="support-case-card-timeblock">
-                  <span>Abertura</span>
-                  <strong>{formatDateTime(supportCase.openedAt)}</strong>
-                </div>
-                <div className="support-case-card-timeblock">
-                  <span>Prazo</span>
-                  <strong>{formatDateTime(supportCase.dueAt)}</strong>
-                </div>
-                <div className="support-case-card-timeblock">
-                  <span>Tempo aberto</span>
-                  <strong>{formatRelativeOpenTime(supportCase.openedAt)}</strong>
-                </div>
-              </div>
-
-              <div className="support-case-card-footer">
-                <span>{supportCase.reason}</span>
-                <span className="support-case-card-link">Abrir atendimento</span>
-              </div>
-            </Link>
-          ))}
-
-          {casesInActiveStatus.length === 0 ? (
-            <div className="support-column-empty">
-              <strong>Nenhum atendimento nesta etapa.</strong>
-              <p>Os novos casos aparecerao aqui conforme entrarem na fila.</p>
+      <section className="grid grid-single">
+        <article className="panel panel-wide drivers-table-panel drivers-table-panel-clean cargo-list-table-panel support-v2-card">
+          <div className="drivers-table-head">
+            <div className="drivers-table-head-copy">
+              <h2>Cockpit de suporte</h2>
+              <span>Fila unica priorizada por severidade, SLA e ordem de criacao para triagem rapida.</span>
             </div>
-          ) : null}
-        </div>
+            <div className="drivers-table-tools">
+              <label className="admin-header-search drivers-inline-search">
+                <input
+                  value={searchTerm}
+                  onChange={(event) => setSearchTerm(event.target.value)}
+                  placeholder="Buscar ticket, solicitante, corrida, tags ou responsavel..."
+                />
+                <span className="admin-header-search-icon" aria-hidden="true">
+                  <SearchIcon />
+                </span>
+              </label>
+            </div>
+          </div>
+
+          <div className="support-v2-metrics">
+            <article className="support-v2-metric">
+              <span>Novos</span>
+              <strong>{kpis.newCount}</strong>
+            </article>
+            <article className="support-v2-metric">
+              <span>Criticos</span>
+              <strong>{kpis.criticalCount}</strong>
+            </article>
+            <article className="support-v2-metric">
+              <span>Aguardando retorno</span>
+              <strong>{kpis.waitingCount}</strong>
+            </article>
+          </div>
+
+          <div className="support-v2-pills-row" role="tablist" aria-label="Filtros por tipo">
+            {typeFilters.map((filter) => {
+              const meta = supportTypeMeta[filter];
+              const isActive = typeFilter === filter;
+              return (
+                <button
+                  key={filter}
+                  type="button"
+                  className={isActive ? "support-v2-pill is-active" : "support-v2-pill"}
+                  onClick={() => setTypeFilter(filter)}
+                >
+                  <span className="support-v2-pill-icon" aria-hidden="true">
+                    {meta.icon}
+                  </span>
+                  <span>{meta.label}</span>
+                  <span className="support-v2-pill-count">{typeCounts[filter]}</span>
+                </button>
+              );
+            })}
+          </div>
+
+          {error ? <p className="journey-list-status-message">{error}</p> : null}
+
+          <div className="drivers-table-wrap support-v2-table-wrap">
+            {isLoading ? (
+              <table className="drivers-table pricing-table cargo-list-table support-v2-table">
+                <thead>
+                  <tr>
+                    <th>Ticket</th>
+                    <th>Tipo</th>
+                    <th>Prioridade</th>
+                    <th>Status</th>
+                    <th>Resumo</th>
+                    <th>Responsavel</th>
+                    <th>SLA</th>
+                    <th className="cargo-actions-col">Acoes</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr>
+                    <td colSpan={8}>Atualizando fila de suporte...</td>
+                  </tr>
+                </tbody>
+              </table>
+            ) : null}
+
+            {!isLoading && queueTickets.length > 0 ? (
+              <table className="drivers-table pricing-table cargo-list-table support-v2-table">
+                <thead>
+                  <tr>
+                    <th>Ticket</th>
+                    <th>Tipo</th>
+                    <th>Prioridade</th>
+                    <th>Status</th>
+                    <th>Resumo</th>
+                    <th>Responsavel</th>
+                    <th>SLA</th>
+                    <th className="cargo-actions-col">Acoes</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {queueTickets.map((ticket) => {
+                    const sla = resolveSlaView(ticket);
+                    const isUnassigned = !ticket.assignee?.trim();
+
+                    return (
+                      <tr key={ticket.id}>
+                        <td className="text-tabular">{ticket.code}</td>
+                        <td>
+                          <span className="status-pill">{supportTypeMeta[ticket.type].label}</span>
+                        </td>
+                        <td>
+                          <span className={resolvePriorityPillClass(ticket.priority)}>
+                            {supportPriorityMeta[ticket.priority].label}
+                          </span>
+                        </td>
+                        <td>
+                          <div className="support-v2-status-stack">
+                            <span className={resolveStatusPillClass(ticket.status)}>{supportStatusMeta[ticket.status].label}</span>
+                            <small>{resolveResponseTrackingLabel(ticket, currentActor.name)}</small>
+                          </div>
+                        </td>
+                        <td title={ticket.title}>
+                          <div className="table-contact-cell">
+                            <strong className="support-v2-summary-line">{ticket.title}</strong>
+                            <span className="cargo-list-description-line">{ticket.requester.name}</span>
+                          </div>
+                        </td>
+                        <td title={ticket.assignee ?? "Sem responsavel"}>
+                          <span className="cargo-list-muted-text">{ticket.assignee ?? "Sem responsavel"}</span>
+                        </td>
+                        <td>
+                          <span className={`${getSlaRiskClassName(sla.risk)} text-tabular`}>{sla.statusLabel}</span>
+                        </td>
+                        <td className="cargo-actions-cell">
+                          {isUnassigned ? (
+                            <button
+                              type="button"
+                              className="button-link secondary-link support-v2-row-action"
+                              onClick={() => void handleClaimAndOpen(ticket.id)}
+                              disabled={busyTicketId === ticket.id}
+                            >
+                              {busyTicketId === ticket.id ? "Atendendo..." : "Atender"}
+                            </button>
+                          ) : (
+                            <Link href={`/support/${ticket.id}`} className="button-link secondary-link support-v2-row-action">
+                              Continuar
+                            </Link>
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            ) : null}
+
+            {!isLoading && queueTickets.length === 0 ? (
+              <div className="cargo-list-empty-state">
+                <strong>Nenhum ticket na fila para os filtros atuais.</strong>
+                <p>Altere o termo de busca ou tipo para visualizar tickets abertos.</p>
+              </div>
+            ) : null}
+          </div>
+        </article>
       </section>
     </main>
   );
 }
 
-function buildCaseAnchorLabel(supportCase: SupportCase): string {
-  if (supportCase.customer && supportCase.driver) {
-    return `${supportCase.customer.name} + ${supportCase.driver.name}`;
+function resolveCurrentActor(): SupportActor {
+  const session = getStoredAdminSession();
+  if (session?.user.name?.trim()) {
+    return { id: session.user.id, name: session.user.name.trim() };
   }
-
-  if (supportCase.customer) {
-    return supportCase.customer.name;
-  }
-
-  if (supportCase.driver) {
-    return supportCase.driver.name;
-  }
-
-  if (supportCase.ride) {
-    return `Corrida ${supportCase.ride.id}`;
-  }
-
-  return "Caso operacional";
+  return { name: "Operador Admin" };
 }
 
-function formatRelativeOpenTime(value: string): string {
-  const openedAt = new Date(value).getTime();
-  const minutes = Math.max(1, Math.round((Date.now() - openedAt) / (1000 * 60)));
-
-  if (minutes < 60) {
-    return `${minutes} min`;
+function resolveResponseTrackingLabel(ticket: SupportTicket, currentActorName: string): string {
+  if (!ticket.responses.length) {
+    return "Sem resposta enviada";
   }
 
-  const hours = Math.round(minutes / 60);
-  return `${hours} h`;
+  const lastResponse = [...ticket.responses].sort(
+    (left, right) => new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime()
+  )[0];
+  if (!lastResponse) {
+    return "Sem resposta enviada";
+  }
+
+  const author = lastResponse.author.trim().toLowerCase() === currentActorName.trim().toLowerCase() ? "voce" : lastResponse.author;
+  const dateLabel = formatShortDateTime(lastResponse.createdAt);
+  return `Respondido por ${author} em ${dateLabel}`;
 }
 
-function getPriorityClassName(priority: SupportCasePriority): string {
-  if (priority === "CRITICAL") {
-    return "chip support-priority-chip support-priority-chip-critical";
-  }
-
-  if (priority === "HIGH") {
-    return "chip support-priority-chip support-priority-chip-high";
-  }
-
-  if (priority === "MEDIUM") {
-    return "chip support-priority-chip support-priority-chip-medium";
-  }
-
-  return "chip support-priority-chip";
+function formatShortDateTime(value: string): string {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "--";
+  return date.toLocaleString("pt-BR", {
+    day: "2-digit",
+    month: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit"
+  });
 }
+
+function resolvePriorityPillClass(priority: SupportTicket["priority"]): string {
+  if (priority === "CRITICAL") return "status-pill support-v2-pill-danger";
+  if (priority === "HIGH") return "status-pill support-v2-pill-warning";
+  return "status-pill";
+}
+
+function resolveStatusPillClass(status: SupportTicket["status"]): string {
+  if (status === "RESOLVED") return "status-pill status-pill-success";
+  if (status === "ESCALATED") return "status-pill support-v2-pill-danger";
+  if (status === "WAITING_CUSTOMER" || status === "WAITING_DRIVER") return "status-pill support-v2-pill-warning";
+  if (status === "IN_ANALYSIS") return "status-pill support-v2-pill-info";
+  return "status-pill";
+}
+

@@ -3,7 +3,11 @@ import { Body, Controller, Get, Param, Post, Query } from "@nestjs/common";
 import { RegisterPushSubscriptionDto } from "./dto/register-push-subscription.dto";
 import { UnregisterExpoPushTokenDto } from "./dto/unregister-expo-push-token.dto";
 import { UnregisterPushSubscriptionDto } from "./dto/unregister-push-subscription.dto";
-import { NotificationItem, NotificationsService } from "./notifications.service";
+import {
+  NotificationItem,
+  NotificationsService,
+  TimekeepingAlertQueueStatus
+} from "./notifications.service";
 
 @Controller("notifications")
 export class NotificationsController {
@@ -19,6 +23,11 @@ export class NotificationsController {
     return {
       publicKey: this.notificationsService.getPushPublicKey()
     };
+  }
+
+  @Get("timekeeping/alerts/queue-status")
+  getTimekeepingAlertQueueStatus(): TimekeepingAlertQueueStatus {
+    return this.notificationsService.getTimekeepingAlertQueueStatus();
   }
 
   @Post("push/subscribe")

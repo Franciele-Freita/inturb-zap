@@ -1,5 +1,5 @@
-import { FleetSectionsPage } from "../../../components/fleet-sections-page";
+import { FleetChecklistsListPage } from "../../../components/fleet-checklists-list-page";
 
 export default function FleetChecklistsPage() {
-  return <FleetSectionsPage activeTab="CHECKLISTS" />;
+  return <FleetChecklistsListPage />;
 }

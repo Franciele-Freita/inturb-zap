@@ -5,6 +5,9 @@ import { useRouter } from "next/navigation";
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import {
   Benefit,
+  CargoOption,
+  CompanyProfileConfig,
+  HolidayScopeType,
   WorkProfileBaseRemunerationType,
   BenefitDiscountBase,
   BenefitDiscountMode,
@@ -17,17 +20,21 @@ import {
   request
 } from "../lib/api";
 import { loadDocumentTemplates } from "../lib/document-templates";
-import { CargoCatalogItem, listActiveCargoItems, listCargoLevelsByName } from "../lib/cargo-catalog";
-import { isOvertimeTemplateCategory } from "../lib/overtime-policy-settings";
 import {
   WorkJourneyTemplate,
   DAY_OPTIONS,
   DayOfWeek,
   formatDayList,
-  loadWorkJourneys,
   resolveScaleTypeLabel,
   summarizeWorkJourney
 } from "../lib/work-journeys";
+import {
+  buildEmploymentLinkageOptions,
+  DEFAULT_EMPLOYMENT_LINKAGES,
+  EmploymentLinkageOption,
+  getEmploymentLinkageCapabilities,
+  resolveEmploymentLinkageTitle
+} from "../lib/employment-linkages";
 import { DriverProfileEditorModal } from "./driver-profile-editor-modal";
 
 type Mode = "create" | "edit" | "view";
@@ -38,7 +45,6 @@ type Props = {
 };
 
 type ProfileWizardStep =
-  | "BASIC"
   | "STRUCTURE"
   | "REMUNERATION"
   | "POLICIES"
@@ -64,9 +70,9 @@ type ContractTemplateOption = {
 };
 
 type FormState = {
-  name: string;
   description: string;
   isActive: boolean;
+  cargoId: string;
   cargoName: string;
   cargoLevel: string;
   contractType: WorkProfileContractType;
@@ -87,6 +93,11 @@ type FormState = {
   contractTemplateVersion: string;
   usesOvertime: boolean;
   overtimeTemplateId: string;
+  usesNightPolicy: boolean;
+  nightTemplateId: string;
+  holidayScopeType: "" | HolidayScopeType;
+  holidayStateCode: string;
+  holidayCityCode: string;
   linkedBenefits: LinkedBenefitConfig[];
   allowContractEditing: boolean;
   allowJourneyCustomization: boolean;
@@ -117,7 +128,6 @@ type ResolvedLinkedBenefit = {
 };
 
 type FormField =
-  | "name"
   | "cargoName"
   | "cargoLevel"
   | "contractType"
@@ -132,14 +142,18 @@ type FormField =
   | "commissionRule"
   | "contractTemplateKey"
   | "overtimeTemplateId"
+  | "nightTemplateId"
+  | "holidayScopeType"
+  | "holidayStateCode"
+  | "holidayCityCode"
   | "linkedBenefits";
 
 type FormFieldErrors = Partial<Record<FormField, string>>;
 
 const defaultForm: FormState = {
-  name: "",
   description: "",
   isActive: true,
+  cargoId: "",
   cargoName: "",
   cargoLevel: "",
   contractType: "CLT",
@@ -160,22 +174,24 @@ const defaultForm: FormState = {
   contractTemplateVersion: "",
   usesOvertime: true,
   overtimeTemplateId: "",
+  usesNightPolicy: false,
+  nightTemplateId: "",
+  holidayScopeType: "",
+  holidayStateCode: "",
+  holidayCityCode: "",
   linkedBenefits: [],
   allowContractEditing: true,
   allowJourneyCustomization: true,
   allowBenefitsCustomization: true
 };
 
-const contractTypeOptions: Array<{ value: WorkProfileContractType; label: string }> = [
-  { value: "CLT", label: "CLT" },
-  { value: "CLT_INTERMITENTE", label: "CLT Intermitente" },
-  { value: "MEI", label: "MEI" },
-  { value: "PJ", label: "PJ" },
-  { value: "AUTONOMO", label: "Autonomo" }
-];
+const defaultContractTypeOptions: EmploymentLinkageOption[] =
+  buildEmploymentLinkageOptions(DEFAULT_EMPLOYMENT_LINKAGES);
+const validContractTypes = new Set<WorkProfileContractType>(
+  defaultContractTypeOptions.map((item) => item.value)
+);
 
 const initialTouchedFields: Record<FormField, boolean> = {
-  name: false,
   cargoName: false,
   cargoLevel: false,
   contractType: false,
@@ -190,49 +206,47 @@ const initialTouchedFields: Record<FormField, boolean> = {
   commissionRule: false,
   contractTemplateKey: false,
   overtimeTemplateId: false,
+  nightTemplateId: false,
+  holidayScopeType: false,
+  holidayStateCode: false,
+  holidayCityCode: false,
   linkedBenefits: false
 };
 
 const profileWizardSteps: ProfileWizardStepDefinition[] = [
   {
-    key: "BASIC",
-    index: "01",
-    title: "Dados basicos",
-    description: "Nome, descricao e status do perfil"
-  },
-  {
     key: "STRUCTURE",
-    index: "02",
-    title: "Estrutura do perfil",
-    description: "Cargo, vinculo, jornada ou modelo de atuacao"
+    index: "01",
+    title: "Cargo e Vínculo",
+    description: "Defina a funcao e o tipo de contratacao"
   },
   {
     key: "REMUNERATION",
-    index: "03",
-    title: "Remuneracao",
-    description: "Modelo de pagamento e regras de comissao"
+    index: "02",
+    title: "Salário e Pagamento",
+    description: "Configure o ganho fixo e comissoes"
   },
   {
     key: "POLICIES",
-    index: "04",
+    index: "03",
     title: "Politicas",
     description: "Hora extra e adicionais por regime"
   },
   {
     key: "BENEFITS",
-    index: "05",
+    index: "04",
     title: "Beneficios",
     description: "Selecione e configure beneficios por vinculo"
   },
   {
     key: "CONTRACT_RULES",
-    index: "06",
+    index: "05",
     title: "Regras contratuais",
     description: "Permissoes de customizacao no contrato"
   },
   {
     key: "REVIEW",
-    index: "07",
+    index: "06",
     title: "Modelo de contrato",
     description: "Selecione o modelo para geracao de contratos"
   }
@@ -242,15 +256,20 @@ export function WorkProfileEditorPage({ mode, profileId }: Props) {
   const router = useRouter();
   const isReadOnly = mode === "view";
   const [form, setForm] = useState<FormState>(defaultForm);
-  const [cargoItems, setCargoItems] = useState<CargoCatalogItem[]>([]);
+  const [cargoItems, setCargoItems] = useState<CargoOption[]>([]);
   const [journeys, setJourneys] = useState<WorkJourneyTemplate[]>([]);
   const [benefits, setBenefits] = useState<Benefit[]>([]);
   const [overtimeTemplates, setOvertimeTemplates] = useState<OvertimeTemplate[]>([]);
+  const [nightTemplates, setNightTemplates] = useState<OvertimeTemplate[]>([]);
+  const [contractTypeOptions, setContractTypeOptions] = useState<EmploymentLinkageOption[]>(
+    defaultContractTypeOptions
+  );
   const [isLoading, setIsLoading] = useState(mode !== "create");
   const [isSaving, setIsSaving] = useState(false);
   const [statusMessage, setStatusMessage] = useState<string | null>(
     mode === "create" ? null : "Carregando perfil."
   );
+  const [dependenciesErrorMessage, setDependenciesErrorMessage] = useState<string | null>(null);
   const [submitAttempted, setSubmitAttempted] = useState(false);
   const [touchedFields, setTouchedFields] =
     useState<Record<FormField, boolean>>(initialTouchedFields);
@@ -258,32 +277,53 @@ export function WorkProfileEditorPage({ mode, profileId }: Props) {
   const [benefitSearch, setBenefitSearch] = useState("");
   const [pendingBenefitIds, setPendingBenefitIds] = useState<string[]>([]);
   const [editingBenefitId, setEditingBenefitId] = useState<string | null>(null);
-  const [activeStep, setActiveStep] = useState<ProfileWizardStep>("BASIC");
+  const [activeStep, setActiveStep] = useState<ProfileWizardStep>("STRUCTURE");
+  const [laborJourneyQuery, setLaborJourneyQuery] = useState("");
+  const [optionalJourneyQuery, setOptionalJourneyQuery] = useState("");
+  const [showLaborJourneyResults, setShowLaborJourneyResults] = useState(false);
+  const [showOptionalJourneyResults, setShowOptionalJourneyResults] = useState(false);
+  const activeContractTypeOptions = useMemo(
+    () => contractTypeOptions.filter((item) => item.isActive),
+    [contractTypeOptions]
+  );
 
   useEffect(() => {
-    setCargoItems(listActiveCargoItems());
-    setJourneys(loadWorkJourneys().filter((journey) => journey.isActive));
-
     void Promise.all([
+      request<WorkJourneyTemplate[]>("/admin/work-journeys?onlyActive=true"),
+      request<CargoOption[]>("/admin/cargos/options?limit=2000"),
       request<Benefit[]>("/admin/benefits"),
-      request<OvertimeTemplate[]>("/admin/overtime-templates")
+      request<OvertimeTemplate[]>("/admin/overtime-templates?category=OVERTIME"),
+      request<OvertimeTemplate[]>("/admin/overtime-templates?category=NIGHT"),
+      request<CompanyProfileConfig>("/admin/company-profile")
     ])
-      .then(([benefitData, overtimeData]) => {
+      .then(([journeyData, cargoData, benefitData, overtimeData, nightData, companyProfile]) => {
+        setJourneys(journeyData);
+        setCargoItems(cargoData);
         setBenefits(benefitData.filter((item) => item.isActive));
-        setOvertimeTemplates(
-          overtimeData.filter(
-            (item) => item.isActive && isOvertimeTemplateCategory(item, "OVERTIME")
-          )
-        );
+        setOvertimeTemplates(overtimeData.filter((item) => item.isActive));
+        setNightTemplates(nightData.filter((item) => item.isActive));
+        setContractTypeOptions(buildEmploymentLinkageOptions(companyProfile.employmentLinkages));
+        setDependenciesErrorMessage(null);
       })
-      .catch(() => {
+      .catch((error) => {
+        setJourneys([]);
+        setCargoItems([]);
         setBenefits([]);
         setOvertimeTemplates([]);
+        setNightTemplates([]);
+        setContractTypeOptions(defaultContractTypeOptions);
+        setDependenciesErrorMessage(
+          error instanceof Error
+            ? `Falha ao carregar dados auxiliares do perfil: ${error.message}`
+            : "Falha ao carregar dados auxiliares do perfil."
+        );
       });
   }, []);
 
   useEffect(() => {
     if (mode === "create" || !profileId) {
+      setLaborJourneyQuery("");
+      setOptionalJourneyQuery("");
       setIsLoading(false);
       return;
     }
@@ -292,6 +332,9 @@ export function WorkProfileEditorPage({ mode, profileId }: Props) {
     void request<WorkProfile>(`/admin/work-profiles/${profileId}`)
       .then((profile) => {
         setForm(mapProfileToForm(profile));
+        const selectedJourneyName = profile.journeyTemplateName?.trim() ?? "";
+        setLaborJourneyQuery(selectedJourneyName);
+        setOptionalJourneyQuery(selectedJourneyName);
         setStatusMessage(null);
       })
       .catch((error) => {
@@ -301,7 +344,8 @@ export function WorkProfileEditorPage({ mode, profileId }: Props) {
   }, [mode, profileId]);
 
   useEffect(() => {
-    if (form.contractType === "CLT" || !form.usesOvertime) {
+    const capabilities = getEmploymentLinkageCapabilities(form.contractType);
+    if (capabilities.allowsOvertimePolicy || !form.usesOvertime) {
       return;
     }
     setForm((current) => ({
@@ -312,7 +356,45 @@ export function WorkProfileEditorPage({ mode, profileId }: Props) {
   }, [form.contractType, form.usesOvertime]);
 
   useEffect(() => {
-    if (form.contractType !== "CLT_INTERMITENTE") {
+    const capabilities = getEmploymentLinkageCapabilities(form.contractType);
+    if (capabilities.isLaborRegime || !form.usesNightPolicy) {
+      return;
+    }
+    setForm((current) => ({
+      ...current,
+      usesNightPolicy: false,
+      nightTemplateId: ""
+    }));
+  }, [form.contractType, form.usesNightPolicy]);
+
+  useEffect(() => {
+    const capabilities = getEmploymentLinkageCapabilities(form.contractType);
+    if (capabilities.isLaborRegime) {
+      return;
+    }
+    if (
+      !form.holidayScopeType &&
+      !form.holidayStateCode.trim() &&
+      !form.holidayCityCode.trim()
+    ) {
+      return;
+    }
+    setForm((current) => ({
+      ...current,
+      holidayScopeType: "",
+      holidayStateCode: "",
+      holidayCityCode: ""
+    }));
+  }, [
+    form.contractType,
+    form.holidayScopeType,
+    form.holidayStateCode,
+    form.holidayCityCode
+  ]);
+
+  useEffect(() => {
+    const capabilities = getEmploymentLinkageCapabilities(form.contractType);
+    if (!capabilities.usesIntermittentRemunerationFlow) {
       return;
     }
     const nextModel: WorkProfileRemunerationModel = form.hasVariableCompensation
@@ -326,6 +408,21 @@ export function WorkProfileEditorPage({ mode, profileId }: Props) {
       remunerationModel: nextModel
     }));
   }, [form.contractType, form.hasVariableCompensation, form.remunerationModel]);
+
+  useEffect(() => {
+    const selected = contractTypeOptions.find((item) => item.value === form.contractType);
+    if (selected?.isActive) {
+      return;
+    }
+    const fallback = activeContractTypeOptions[0];
+    if (!fallback || fallback.value === form.contractType) {
+      return;
+    }
+    setForm((current) => ({
+      ...current,
+      contractType: fallback.value
+    }));
+  }, [contractTypeOptions, activeContractTypeOptions, form.contractType]);
 
   const journeyOptions = useMemo(() => {
     const selectedJourney = journeys.find((item) => item.id === form.journeyTemplateId);
@@ -348,25 +445,39 @@ export function WorkProfileEditorPage({ mode, profileId }: Props) {
     ];
   }, [journeys, form.journeyTemplateId]);
   const cargoOptions = useMemo(() => {
-    const names = cargoItems.map((item) => item.name);
-    if (!form.cargoName || names.includes(form.cargoName)) {
-      return names;
+    const options = cargoItems.map((item) => ({
+      id: item.id,
+      name: item.name
+    }));
+    if (
+      form.cargoId.trim().length > 0 &&
+      form.cargoName.trim().length > 0 &&
+      !options.some((item) => item.id === form.cargoId)
+    ) {
+      options.push({
+        id: form.cargoId,
+        name: form.cargoName.trim()
+      });
     }
-    return [...names, form.cargoName].sort((left, right) => left.localeCompare(right, "pt-BR"));
-  }, [cargoItems, form.cargoName]);
+    return options.sort((left, right) => left.name.localeCompare(right.name, "pt-BR"));
+  }, [cargoItems, form.cargoId, form.cargoName]);
+  const selectedCargo = useMemo(
+    () => cargoItems.find((item) => item.id === form.cargoId),
+    [cargoItems, form.cargoId]
+  );
   const cargoLevelOptions = useMemo(() => {
+    if (selectedCargo) {
+      return selectedCargo.levels;
+    }
     if (!form.cargoName.trim()) {
       return [];
     }
     const normalizedName = form.cargoName.trim().toLowerCase();
-    const selectedCargo = cargoItems.find(
+    const fallbackCargo = cargoItems.find(
       (item) => item.name.trim().toLowerCase() === normalizedName
     );
-    if (selectedCargo) {
-      return selectedCargo.levels;
-    }
-    return listCargoLevelsByName(form.cargoName);
-  }, [cargoItems, form.cargoName]);
+    return fallbackCargo?.levels ?? [];
+  }, [cargoItems, form.cargoName, selectedCargo]);
 
   const selectedJourney = useMemo(
     () => journeyOptions.find((item) => item.id === form.journeyTemplateId),
@@ -380,15 +491,30 @@ export function WorkProfileEditorPage({ mode, profileId }: Props) {
     () => buildJourneyPreview(selectedJourney),
     [selectedJourney]
   );
-  const isLaborContract = useMemo(
-    () => form.contractType === "CLT" || form.contractType === "CLT_INTERMITENTE",
+  const contractCapabilities = useMemo(
+    () => getEmploymentLinkageCapabilities(form.contractType),
     [form.contractType]
   );
-  const allowsOvertimePolicy = useMemo(() => form.contractType === "CLT", [form.contractType]);
+  const isLaborContract = useMemo(
+    () => contractCapabilities.isLaborRegime,
+    [contractCapabilities]
+  );
+  const allowsOvertimePolicy = useMemo(
+    () => contractCapabilities.allowsOvertimePolicy,
+    [contractCapabilities]
+  );
+  const usesIntermittentRemunerationFlow = useMemo(
+    () => contractCapabilities.usesIntermittentRemunerationFlow,
+    [contractCapabilities]
+  );
 
   const selectedOvertime = useMemo(
     () => overtimeTemplates.find((item) => item.id === form.overtimeTemplateId),
     [overtimeTemplates, form.overtimeTemplateId]
+  );
+  const selectedNight = useMemo(
+    () => nightTemplates.find((item) => item.id === form.nightTemplateId),
+    [nightTemplates, form.nightTemplateId]
   );
   const contractTemplateOptions = useMemo<ContractTemplateOption[]>(() => {
     return loadDocumentTemplates()
@@ -425,6 +551,10 @@ export function WorkProfileEditorPage({ mode, profileId }: Props) {
     () => buildOvertimePreview(selectedOvertime),
     [selectedOvertime]
   );
+  const selectedNightPreview = useMemo(
+    () => buildOvertimePreview(selectedNight),
+    [selectedNight]
+  );
   const filteredBenefits = useMemo(() => {
     const query = benefitSearch.trim().toLowerCase();
     if (!query) {
@@ -444,9 +574,29 @@ export function WorkProfileEditorPage({ mode, profileId }: Props) {
     () => linkedBenefits.find((item) => item.config.benefitId === editingBenefitId),
     [linkedBenefits, editingBenefitId]
   );
+  const laborJourneyResults = useMemo(() => {
+    const query = laborJourneyQuery.trim().toLowerCase();
+    return journeyOptions
+      .filter((journey) => {
+        if (!query) return true;
+        const details = buildJourneyOptionDetails(journey).toLowerCase();
+        return journey.name.toLowerCase().includes(query) || details.includes(query);
+      })
+      .slice(0, 20);
+  }, [journeyOptions, laborJourneyQuery]);
+  const optionalJourneyResults = useMemo(() => {
+    const query = optionalJourneyQuery.trim().toLowerCase();
+    return journeyOptions
+      .filter((journey) => {
+        if (!query) return true;
+        const details = buildJourneyOptionDetails(journey).toLowerCase();
+        return journey.name.toLowerCase().includes(query) || details.includes(query);
+      })
+      .slice(0, 20);
+  }, [journeyOptions, optionalJourneyQuery]);
 
   useEffect(() => {
-    if (!form.cargoName.trim()) {
+    if (!form.cargoId.trim()) {
       if (form.cargoLevel.trim().length > 0) {
         setForm((current) => ({ ...current, cargoLevel: "" }));
       }
@@ -463,7 +613,30 @@ export function WorkProfileEditorPage({ mode, profileId }: Props) {
     if (!hasSelectedLevel) {
       setForm((current) => ({ ...current, cargoLevel: cargoLevelOptions[0] }));
     }
-  }, [form.cargoName, form.cargoLevel, cargoLevelOptions]);
+  }, [form.cargoId, form.cargoLevel, cargoLevelOptions]);
+
+  useEffect(() => {
+    if (form.cargoId.trim()) {
+      const cargo = cargoItems.find((item) => item.id === form.cargoId);
+      if (cargo && cargo.name !== form.cargoName) {
+        setForm((current) => ({ ...current, cargoName: cargo.name }));
+      }
+      return;
+    }
+
+    if (!form.cargoName.trim() || cargoItems.length === 0) {
+      return;
+    }
+    const normalizedName = form.cargoName.trim().toLowerCase();
+    const matched = cargoItems.find((item) => item.name.trim().toLowerCase() === normalizedName);
+    if (matched) {
+      setForm((current) => ({
+        ...current,
+        cargoId: matched.id,
+        cargoName: matched.name
+      }));
+    }
+  }, [cargoItems, form.cargoId, form.cargoName]);
 
   const fieldErrors = useMemo(
     () =>
@@ -472,7 +645,9 @@ export function WorkProfileEditorPage({ mode, profileId }: Props) {
         cargoLevelOptions,
         journeyOptions,
         overtimeTemplates,
+        nightTemplates,
         contractTemplateOptions,
+        contractTypeOptions: activeContractTypeOptions,
         isLaborContract,
         allowsOvertimePolicy
       }),
@@ -482,7 +657,9 @@ export function WorkProfileEditorPage({ mode, profileId }: Props) {
       cargoLevelOptions,
       journeyOptions,
       overtimeTemplates,
+      nightTemplates,
       contractTemplateOptions,
+      activeContractTypeOptions,
       isLaborContract,
       allowsOvertimePolicy
     ]
@@ -499,11 +676,21 @@ export function WorkProfileEditorPage({ mode, profileId }: Props) {
       buildSummary({
         form,
         isLaborContract,
+        allowsOvertimePolicy,
         selectedJourney,
         selectedOvertime,
+        selectedNight,
         selectedContractTemplate
       }),
-    [form, isLaborContract, selectedJourney, selectedOvertime, selectedContractTemplate]
+    [
+      form,
+      isLaborContract,
+      allowsOvertimePolicy,
+      selectedJourney,
+      selectedOvertime,
+      selectedNight,
+      selectedContractTemplate
+    ]
   );
   const activeStepIndex = useMemo(
     () => Math.max(profileWizardSteps.findIndex((step) => step.key === activeStep), 0),
@@ -516,7 +703,6 @@ export function WorkProfileEditorPage({ mode, profileId }: Props) {
     }
 
     return {
-      BASIC: unique([fieldErrors.name]),
       STRUCTURE: unique([
         fieldErrors.cargoName,
         fieldErrors.cargoLevel,
@@ -533,7 +719,13 @@ export function WorkProfileEditorPage({ mode, profileId }: Props) {
         fieldErrors.commissionValue,
         fieldErrors.commissionRule
       ]),
-      POLICIES: unique([fieldErrors.overtimeTemplateId]),
+      POLICIES: unique([
+        fieldErrors.overtimeTemplateId,
+        fieldErrors.nightTemplateId,
+        fieldErrors.holidayScopeType,
+        fieldErrors.holidayStateCode,
+        fieldErrors.holidayCityCode
+      ]),
       BENEFITS: unique([fieldErrors.linkedBenefits]),
       CONTRACT_RULES: [],
       REVIEW: unique([fieldErrors.contractTemplateKey])
@@ -670,7 +862,6 @@ export function WorkProfileEditorPage({ mode, profileId }: Props) {
     event.preventDefault();
     setSubmitAttempted(true);
     setTouchedFields({
-      name: true,
       cargoName: true,
       cargoLevel: true,
       contractType: true,
@@ -685,6 +876,10 @@ export function WorkProfileEditorPage({ mode, profileId }: Props) {
       commissionRule: true,
       contractTemplateKey: true,
       overtimeTemplateId: true,
+      nightTemplateId: true,
+      holidayScopeType: true,
+      holidayStateCode: true,
+      holidayCityCode: true,
       linkedBenefits: true
     });
 
@@ -703,9 +898,11 @@ export function WorkProfileEditorPage({ mode, profileId }: Props) {
         form,
         isLaborContract,
         allowsOvertimePolicy,
+        usesIntermittentRemunerationFlow,
         selectedJourney,
         selectedJourneySummary,
         selectedOvertime,
+        selectedNight,
         selectedContractTemplate
       });
 
@@ -751,6 +948,19 @@ export function WorkProfileEditorPage({ mode, profileId }: Props) {
       </header>
 
       {statusMessage ? <p className="overtime-editor-status-message">{statusMessage}</p> : null}
+      {dependenciesErrorMessage ? (
+        <p
+          className="overtime-editor-status-message"
+          role="alert"
+          style={{
+            border: "1px solid rgba(219, 67, 103, 0.28)",
+            background: "rgba(255, 246, 249, 0.88)",
+            color: "#a13a49"
+          }}
+        >
+          {dependenciesErrorMessage}
+        </p>
+      ) : null}
 
       <div className="driver-editor-workspace">
         <aside className="driver-editor-stepbar" aria-label="Etapas do cadastro do perfil de trabalho">
@@ -812,53 +1022,12 @@ export function WorkProfileEditorPage({ mode, profileId }: Props) {
                 </div>
               ) : null}
 
-              {activeStep === "BASIC" ? (
-                <>
-                  <div className="panel-head">
-                    <h2>Dados basicos</h2>
-                    <span>Nome, descricao e status do perfil.</span>
-                  </div>
-
-                  <div className="form-grid">
-                    <label className={shouldShowFieldError("name") ? "driver-editor-field-invalid" : undefined}>
-                      Nome do perfil de trabalho
-                      <input
-                        value={form.name}
-                        onChange={(event) => update("name", event.target.value)}
-                        onBlur={() => markFieldAsTouched("name")}
-                        disabled={disabled}
-                      />
-                      {shouldShowFieldError("name") ? <small>{fieldErrors.name}</small> : null}
-                    </label>
-                    <label className="toggle-field">
-                      <span>Perfil ativo</span>
-                      <input
-                        type="checkbox"
-                        checked={form.isActive}
-                        onChange={(event) => update("isActive", event.target.checked)}
-                        disabled={disabled}
-                      />
-                    </label>
-                  </div>
-
-                  <label>
-                    Descricao
-                    <input
-                      value={form.description}
-                      onChange={(event) => update("description", event.target.value)}
-                      placeholder="Ex.: Perfil padrao para operacao urbana CLT."
-                      disabled={disabled}
-                    />
-                  </label>
-                </>
-              ) : null}
-
               {activeStep === "STRUCTURE" ? (
                 <>
                   <div className="panel-head">
-                    <h2>Estrutura do perfil</h2>
+                    <h2>Cargo e Tipo de Contrato</h2>
                     <span>
-                      Defina cargo e vinculo. A tela se adapta automaticamente para jornada ou modelo de atuacao.
+                      Defina cargo, nivel e vinculo. O nome do perfil sera gerado automaticamente.
                     </span>
                   </div>
 
@@ -867,15 +1036,24 @@ export function WorkProfileEditorPage({ mode, profileId }: Props) {
                       Cargo
                       <select
                         className="select"
-                        value={form.cargoName}
-                        onChange={(event) => update("cargoName", event.target.value)}
+                        value={form.cargoId}
+                        onChange={(event) => {
+                          const nextCargoId = event.target.value;
+                          const selected = cargoItems.find((item) => item.id === nextCargoId);
+                          setForm((current) => ({
+                            ...current,
+                            cargoId: nextCargoId,
+                            cargoName: selected?.name ?? "",
+                            cargoLevel: selected ? current.cargoLevel : ""
+                          }));
+                        }}
                         onBlur={() => markFieldAsTouched("cargoName")}
                         disabled={disabled}
                       >
                         <option value="">Selecione um cargo</option>
                         {cargoOptions.map((cargo) => (
-                          <option key={cargo} value={cargo}>
-                            {cargo}
+                          <option key={cargo.id} value={cargo.id}>
+                            {cargo.name}
                           </option>
                         ))}
                       </select>
@@ -888,7 +1066,7 @@ export function WorkProfileEditorPage({ mode, profileId }: Props) {
                         value={form.cargoLevel}
                         onChange={(event) => update("cargoLevel", event.target.value)}
                         onBlur={() => markFieldAsTouched("cargoLevel")}
-                        disabled={disabled || !form.cargoName.trim()}
+                        disabled={disabled || !form.cargoId.trim()}
                       >
                         <option value="">Selecione um nivel</option>
                         {cargoLevelOptions.map((level) => (
@@ -907,77 +1085,106 @@ export function WorkProfileEditorPage({ mode, profileId }: Props) {
                         value={form.contractType}
                         onChange={(event) => update("contractType", event.target.value as WorkProfileContractType)}
                         onBlur={() => markFieldAsTouched("contractType")}
-                        disabled={disabled}
+                        disabled={disabled || activeContractTypeOptions.length === 0}
                       >
-                        {contractTypeOptions.map((option) => (
+                        {activeContractTypeOptions.map((option) => (
                           <option key={option.value} value={option.value}>
                             {option.label}
                           </option>
                         ))}
                       </select>
                       {shouldShowFieldError("contractType") ? <small>{fieldErrors.contractType}</small> : null}
+                      {activeContractTypeOptions.length === 0 ? (
+                        <small>Nenhum vinculo ativo configurado na empresa.</small>
+                      ) : null}
+                    </label>
+
+                    <label className="toggle-field">
+                      <span>Perfil ativo</span>
+                      <input
+                        type="checkbox"
+                        checked={form.isActive}
+                        onChange={(event) => update("isActive", event.target.checked)}
+                        disabled={disabled}
+                      />
                     </label>
                   </div>
 
-                  <div className="driver-editor-contract-inline-note">
-                    <strong>Niveis disponiveis para o cargo</strong>
-                    <span>
-                      {form.cargoName.trim().length === 0
-                        ? "Selecione um cargo para carregar os niveis."
-                        : cargoLevelOptions.length > 0
-                          ? cargoLevelOptions.join(" | ")
-                          : "Este cargo nao possui niveis cadastrados."}
-                    </span>
-                  </div>
+                  <label>
+                    Descricao
+                    <textarea
+                      rows={3}
+                      value={form.description}
+                      onChange={(event) => update("description", event.target.value)}
+                      placeholder="Ex.: Perfil padrao para operacao urbana CLT."
+                      disabled={disabled}
+                    />
+                  </label>
 
                   {isLaborContract ? (
                     <>
-                      <div className="driver-editor-contract-inline-note">
-                        <strong>Vinculo com regime trabalhista</strong>
-                        <span>Jornada obrigatoria com impacto em ponto e politicas de hora extra.</span>
-                      </div>
-
                       <div className="form-grid">
-                        <label
+                        <div
                           className={
                             shouldShowFieldError("journeyTemplateId") ? "driver-editor-field-invalid" : undefined
                           }
+                          style={{ position: "relative" }}
                         >
-                          Jornada
-                          <select
-                            className="select"
-                            value={form.journeyTemplateId}
-                            onChange={(event) => update("journeyTemplateId", event.target.value)}
-                            onBlur={() => markFieldAsTouched("journeyTemplateId")}
+                          <span>Jornada</span>
+                          <input
+                            value={laborJourneyQuery}
+                            onChange={(event) => {
+                              const nextQuery = event.target.value;
+                              setLaborJourneyQuery(nextQuery);
+                              if (
+                                form.journeyTemplateId &&
+                                nextQuery.trim() !== (selectedJourney?.name ?? "")
+                              ) {
+                                update("journeyTemplateId", "");
+                              }
+                              setShowLaborJourneyResults(true);
+                            }}
+                            onFocus={() => setShowLaborJourneyResults(true)}
+                            onBlur={() => {
+                              markFieldAsTouched("journeyTemplateId");
+                              setTimeout(() => setShowLaborJourneyResults(false), 120);
+                            }}
+                            placeholder="Buscar jornada por nome ou detalhes..."
                             disabled={disabled}
-                          >
-                            <option value="">Selecione uma jornada</option>
-                            {journeyOptions.map((journey) => (
-                              <option key={journey.id} value={journey.id}>
-                                {journey.name}
-                              </option>
-                            ))}
-                          </select>
+                          />
+                          {showLaborJourneyResults && laborJourneyResults.length > 0 ? (
+                            <ul className="cbo-autocomplete-list">
+                              {laborJourneyResults.map((journey) => (
+                                <li
+                                  key={journey.id}
+                                  onMouseDown={(event) => event.preventDefault()}
+                                  onClick={() => {
+                                    update("journeyTemplateId", journey.id);
+                                    setLaborJourneyQuery(journey.name);
+                                    setOptionalJourneyQuery(journey.name);
+                                    setShowLaborJourneyResults(false);
+                                    markFieldAsTouched("journeyTemplateId");
+                                  }}
+                                >
+                                  <strong>{journey.name}</strong>
+                                  <small>{buildJourneyOptionDetails(journey)}</small>
+                                </li>
+                              ))}
+                            </ul>
+                          ) : null}
                           {shouldShowFieldError("journeyTemplateId") ? (
                             <small>{fieldErrors.journeyTemplateId}</small>
                           ) : null}
-                        </label>
+                        </div>
                       </div>
                     </>
                   ) : (
                     <>
-                      <div className="driver-editor-contract-inline-note">
-                        <strong>Vinculo sem regime trabalhista</strong>
-                        <span>
-                          Jornada deixa de ser obrigatoria. Configure o modelo de atuacao e disponibilidade operacional.
-                        </span>
-                      </div>
-
                       <div className="form-grid">
                         <label
                           className={shouldShowFieldError("engagementType") ? "driver-editor-field-invalid" : undefined}
                         >
-                          Tipo de atuacao
+                          Como ele sera acionado? (Atuacao)
                           <select
                             className="select"
                             value={form.engagementType}
@@ -991,26 +1198,66 @@ export function WorkProfileEditorPage({ mode, profileId }: Props) {
                           </select>
                           {shouldShowFieldError("engagementType") ? <small>{fieldErrors.engagementType}</small> : null}
                         </label>
-                        <label>
-                          Jornada de referencia operacional (opcional)
-                          <select
-                            className="select"
-                            value={form.journeyTemplateId}
-                            onChange={(event) => update("journeyTemplateId", event.target.value)}
-                            onBlur={() => markFieldAsTouched("journeyTemplateId")}
+                        <div style={{ position: "relative" }}>
+                          <span>Jornada de referencia operacional (opcional)</span>
+                          <input
+                            value={optionalJourneyQuery}
+                            onChange={(event) => {
+                              const nextQuery = event.target.value;
+                              setOptionalJourneyQuery(nextQuery);
+                              if (
+                                form.journeyTemplateId &&
+                                nextQuery.trim() !== (selectedJourney?.name ?? "")
+                              ) {
+                                update("journeyTemplateId", "");
+                              }
+                              setShowOptionalJourneyResults(true);
+                            }}
+                            onFocus={() => setShowOptionalJourneyResults(true)}
+                            onBlur={() => {
+                              markFieldAsTouched("journeyTemplateId");
+                              setTimeout(() => setShowOptionalJourneyResults(false), 120);
+                            }}
+                            placeholder="Buscar jornada por nome ou detalhes..."
                             disabled={disabled}
-                          >
-                            <option value="">Nao usar jornada de referencia</option>
-                            {journeyOptions.map((journey) => (
-                              <option key={journey.id} value={journey.id}>
-                                {journey.name}
-                              </option>
-                            ))}
-                          </select>
+                          />
+                          {showOptionalJourneyResults ? (
+                            <ul className="cbo-autocomplete-list">
+                              <li
+                                onMouseDown={(event) => event.preventDefault()}
+                                onClick={() => {
+                                  update("journeyTemplateId", "");
+                                  setOptionalJourneyQuery("");
+                                  setLaborJourneyQuery("");
+                                  setShowOptionalJourneyResults(false);
+                                  markFieldAsTouched("journeyTemplateId");
+                                }}
+                              >
+                                <strong>Nao usar jornada de referencia</strong>
+                                <small>Perfil sem jornada pre-definida.</small>
+                              </li>
+                              {optionalJourneyResults.map((journey) => (
+                                <li
+                                  key={journey.id}
+                                  onMouseDown={(event) => event.preventDefault()}
+                                  onClick={() => {
+                                    update("journeyTemplateId", journey.id);
+                                    setOptionalJourneyQuery(journey.name);
+                                    setLaborJourneyQuery(journey.name);
+                                    setShowOptionalJourneyResults(false);
+                                    markFieldAsTouched("journeyTemplateId");
+                                  }}
+                                >
+                                  <strong>{journey.name}</strong>
+                                  <small>{buildJourneyOptionDetails(journey)}</small>
+                                </li>
+                              ))}
+                            </ul>
+                          ) : null}
                           {shouldShowFieldError("journeyTemplateId") ? (
                             <small>{fieldErrors.journeyTemplateId}</small>
                           ) : null}
-                        </label>
+                        </div>
                       </div>
 
                       <div className="stack">
@@ -1085,13 +1332,13 @@ export function WorkProfileEditorPage({ mode, profileId }: Props) {
                   <div className="panel-head">
                     <h2>Remuneracao</h2>
                     <span>
-                      {form.contractType === "CLT_INTERMITENTE"
+                      {usesIntermittentRemunerationFlow
                         ? "Defina base de pagamento do intermitente e variavel adicional opcional."
                         : "Configure o modelo de pagamento do perfil."}
                     </span>
                   </div>
 
-                  {form.contractType === "CLT_INTERMITENTE" ? (
+                  {usesIntermittentRemunerationFlow ? (
                     <>
                       <div className="form-grid">
                         <label
@@ -1190,7 +1437,7 @@ export function WorkProfileEditorPage({ mode, profileId }: Props) {
                     </div>
                   )}
 
-                  {form.contractType !== "CLT_INTERMITENTE" && form.remunerationModel !== "COMMISSION_ONLY" ? (
+                  {!usesIntermittentRemunerationFlow && form.remunerationModel !== "COMMISSION_ONLY" ? (
                     <div className="form-grid">
                       <label className={shouldShowFieldError("fixedSalary") ? "driver-editor-field-invalid" : undefined}>
                         Valor do salario
@@ -1208,7 +1455,7 @@ export function WorkProfileEditorPage({ mode, profileId }: Props) {
                     </div>
                   ) : null}
 
-                  {(form.contractType === "CLT_INTERMITENTE" ? form.hasVariableCompensation : form.remunerationModel !== "FIXED") ? (
+                  {(usesIntermittentRemunerationFlow ? form.hasVariableCompensation : form.remunerationModel !== "FIXED") ? (
                     <>
                       <div className="panel-head">
                         <h2>Variavel adicional</h2>
@@ -1228,7 +1475,7 @@ export function WorkProfileEditorPage({ mode, profileId }: Props) {
                           >
                             <option value="PERCENT">Percentual</option>
                             <option value="PER_RIDE">
-                              {form.contractType === "CLT_INTERMITENTE" ? "Valor por evento/servico" : "Valor por corrida"}
+                              {usesIntermittentRemunerationFlow ? "Valor por evento/servico" : "Valor por corrida"}
                             </option>
                           </select>
                         </label>
@@ -1281,19 +1528,87 @@ export function WorkProfileEditorPage({ mode, profileId }: Props) {
                     <span>Hora extra e adicionais conforme regime do vinculo.</span>
                   </div>
 
-                  {allowsOvertimePolicy ? (
+                  {isLaborContract ? (
                     <>
+                      {allowsOvertimePolicy ? (
+                        <>
+                          <div className="form-grid">
+                            <label className="toggle-field">
+                              <span>Perfil utiliza hora extra</span>
+                              <input
+                                type="checkbox"
+                                checked={form.usesOvertime}
+                                onChange={(event) =>
+                                  setForm((current) => ({
+                                    ...current,
+                                    usesOvertime: event.target.checked,
+                                    overtimeTemplateId: event.target.checked ? current.overtimeTemplateId : ""
+                                  }))
+                                }
+                                disabled={disabled}
+                              />
+                            </label>
+                          </div>
+
+                          {form.usesOvertime ? (
+                            <>
+                              <div className="form-grid">
+                                <label
+                                  className={
+                                    shouldShowFieldError("overtimeTemplateId")
+                                      ? "driver-editor-field-invalid"
+                                      : undefined
+                                  }
+                                >
+                                  Politica de hora extra
+                                  <select
+                                    className="select"
+                                    value={form.overtimeTemplateId}
+                                    onChange={(event) => update("overtimeTemplateId", event.target.value)}
+                                    onBlur={() => markFieldAsTouched("overtimeTemplateId")}
+                                    disabled={disabled}
+                                  >
+                                    <option value="">Selecione uma politica</option>
+                                    {overtimeTemplates.map((item) => (
+                                      <option key={item.id} value={item.id}>
+                                        {item.name}
+                                      </option>
+                                    ))}
+                                  </select>
+                                  {shouldShowFieldError("overtimeTemplateId") ? (
+                                    <small>{fieldErrors.overtimeTemplateId}</small>
+                                  ) : null}
+                                </label>
+                              </div>
+
+                              <div className="driver-editor-contract-inline-note">
+                                <strong>Resumo da politica</strong>
+                                <span>
+                                  {selectedOvertimePreview ??
+                                    "Selecione uma politica de hora extra para visualizar o resumo."}
+                                </span>
+                              </div>
+                            </>
+                          ) : (
+                            <div className="driver-editor-contract-inline-note">
+                              <strong>Hora extra desativada</strong>
+                              <span>Este perfil sera salvo sem politica de hora extra.</span>
+                            </div>
+                          )}
+                        </>
+                      ) : null}
+
                       <div className="form-grid">
                         <label className="toggle-field">
-                          <span>Perfil utiliza hora extra</span>
+                          <span>Perfil utiliza adicional noturno</span>
                           <input
                             type="checkbox"
-                            checked={form.usesOvertime}
+                            checked={form.usesNightPolicy}
                             onChange={(event) =>
                               setForm((current) => ({
                                 ...current,
-                                usesOvertime: event.target.checked,
-                                overtimeTemplateId: event.target.checked ? current.overtimeTemplateId : ""
+                                usesNightPolicy: event.target.checked,
+                                nightTemplateId: event.target.checked ? current.nightTemplateId : ""
                               }))
                             }
                             disabled={disabled}
@@ -1301,54 +1616,155 @@ export function WorkProfileEditorPage({ mode, profileId }: Props) {
                         </label>
                       </div>
 
-                      {form.usesOvertime ? (
+                      {form.usesNightPolicy ? (
                         <>
                           <div className="form-grid">
                             <label
                               className={
-                                shouldShowFieldError("overtimeTemplateId") ? "driver-editor-field-invalid" : undefined
+                                shouldShowFieldError("nightTemplateId")
+                                  ? "driver-editor-field-invalid"
+                                  : undefined
                               }
                             >
-                              Politica de hora extra
+                              Politica de adicional noturno
                               <select
                                 className="select"
-                                value={form.overtimeTemplateId}
-                                onChange={(event) => update("overtimeTemplateId", event.target.value)}
-                                onBlur={() => markFieldAsTouched("overtimeTemplateId")}
+                                value={form.nightTemplateId}
+                                onChange={(event) => update("nightTemplateId", event.target.value)}
+                                onBlur={() => markFieldAsTouched("nightTemplateId")}
                                 disabled={disabled}
                               >
                                 <option value="">Selecione uma politica</option>
-                                {overtimeTemplates.map((item) => (
+                                {nightTemplates.map((item) => (
                                   <option key={item.id} value={item.id}>
                                     {item.name}
                                   </option>
                                 ))}
                               </select>
-                              {shouldShowFieldError("overtimeTemplateId") ? (
-                                <small>{fieldErrors.overtimeTemplateId}</small>
+                              {shouldShowFieldError("nightTemplateId") ? (
+                                <small>{fieldErrors.nightTemplateId}</small>
                               ) : null}
                             </label>
                           </div>
 
                           <div className="driver-editor-contract-inline-note">
-                            <strong>Resumo da politica</strong>
+                            <strong>Resumo da politica noturna</strong>
                             <span>
-                              {selectedOvertimePreview ??
-                                "Selecione uma politica de hora extra para visualizar o resumo."}
+                              {selectedNightPreview ??
+                                "Selecione uma politica de adicional noturno para visualizar o resumo."}
                             </span>
                           </div>
                         </>
                       ) : (
                         <div className="driver-editor-contract-inline-note">
-                          <strong>Hora extra desativada</strong>
-                          <span>Este perfil sera salvo sem politica de hora extra.</span>
+                          <strong>Adicional noturno desativado</strong>
+                          <span>Este perfil sera salvo sem politica de adicional noturno.</span>
                         </div>
                       )}
+
+                      <div className="driver-editor-contract-inline-note">
+                        <strong>Politica de DSR herdada da jornada</strong>
+                        <span>
+                          {selectedJourney?.dsrPolicy?.summary ??
+                            "Configure uma politica de DSR na jornada para concluir este perfil."}
+                        </span>
+                      </div>
+
+                      <div className="form-grid">
+                        <label className={shouldShowFieldError("holidayScopeType") ? "driver-editor-field-invalid" : undefined}>
+                          Escopo de feriados para este perfil
+                          <select
+                            className="select"
+                            value={form.holidayScopeType}
+                            onChange={(event) =>
+                              setForm((current) => ({
+                                ...current,
+                                holidayScopeType: event.target.value as FormState["holidayScopeType"],
+                                holidayStateCode:
+                                  event.target.value === "STATE" || event.target.value === "CITY"
+                                    ? current.holidayStateCode
+                                    : "",
+                                holidayCityCode: event.target.value === "CITY" ? current.holidayCityCode : ""
+                              }))
+                            }
+                            onBlur={() => markFieldAsTouched("holidayScopeType")}
+                            disabled={disabled}
+                          >
+                            <option value="">Sem escopo dedicado</option>
+                            <option value="NATIONAL">Nacional</option>
+                            <option value="STATE">Estadual (UF)</option>
+                            <option value="CITY">Municipal (UF + cidade)</option>
+                          </select>
+                          {shouldShowFieldError("holidayScopeType") ? <small>{fieldErrors.holidayScopeType}</small> : null}
+                        </label>
+                      </div>
+
+                      {form.holidayScopeType === "STATE" || form.holidayScopeType === "CITY" ? (
+                        <div className="form-grid">
+                          <label
+                            className={
+                              shouldShowFieldError("holidayStateCode") ? "driver-editor-field-invalid" : undefined
+                            }
+                          >
+                            UF
+                            <input
+                              type="text"
+                              maxLength={2}
+                              value={form.holidayStateCode}
+                              onChange={(event) =>
+                                update("holidayStateCode", event.target.value.toUpperCase())
+                              }
+                              onBlur={() => markFieldAsTouched("holidayStateCode")}
+                              placeholder="SP"
+                              disabled={disabled}
+                            />
+                            {shouldShowFieldError("holidayStateCode") ? (
+                              <small>{fieldErrors.holidayStateCode}</small>
+                            ) : null}
+                          </label>
+
+                          {form.holidayScopeType === "CITY" ? (
+                            <label
+                              className={
+                                shouldShowFieldError("holidayCityCode") ? "driver-editor-field-invalid" : undefined
+                              }
+                            >
+                              Cidade
+                              <input
+                                type="text"
+                                value={form.holidayCityCode}
+                                onChange={(event) => update("holidayCityCode", event.target.value)}
+                                onBlur={() => markFieldAsTouched("holidayCityCode")}
+                                placeholder="Sao Paulo"
+                                disabled={disabled}
+                              />
+                              {shouldShowFieldError("holidayCityCode") ? (
+                                <small>{fieldErrors.holidayCityCode}</small>
+                              ) : null}
+                            </label>
+                          ) : null}
+                        </div>
+                      ) : null}
+
+                      <div className="driver-editor-contract-inline-note">
+                        <strong>Resumo de feriados</strong>
+                        <span>
+                          {form.holidayScopeType
+                            ? buildHolidayScopePreview(
+                                form.holidayScopeType,
+                                form.holidayStateCode.trim().toUpperCase() || undefined,
+                                form.holidayCityCode.trim() || undefined
+                              )
+                            : "Sem escopo dedicado (usa regra padrao da empresa/apuracao)."}
+                        </span>
+                      </div>
                     </>
                   ) : (
                     <div className="driver-editor-contract-inline-note">
                       <strong>Politica trabalhista desabilitada para este vinculo</strong>
-                      <span>Para MEI, PJ e Autonomo, hora extra e controles legais ficam ocultos.</span>
+                      <span>
+                        Para MEI, PJ e Autonomo, hora extra, adicional noturno e feriados ficam ocultos.
+                      </span>
                     </div>
                   )}
                 </>
@@ -1463,8 +1879,30 @@ export function WorkProfileEditorPage({ mode, profileId }: Props) {
               {activeStep === "REVIEW" ? (
                 <>
                   <div className="panel-head">
-                    <h2>Selecao de modelo de contrato</h2>
-                    <span>Defina o modelo padrao usado quando este perfil gerar contratos.</span>
+                    <h2>Conferência Final e Contrato</h2>
+                    <span>Revise os dados e escolha o modelo de documento para impressao.</span>
+                  </div>
+
+                  <div className="journey-review-container">
+                    <div className="journey-review-main-card">
+                      <strong>Resumo do Perfil</strong>
+                      <p className="journey-review-sentence">{summary}</p>
+                    </div>
+                    
+                    <div className="journey-review-grid" style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: "1rem", marginTop: "1rem" }}>
+                      <div className="review-item">
+                        <label style={{ display: "block", fontSize: "0.75rem", opacity: 0.7 }}>Remuneração</label>
+                        <strong>{form.fixedSalary ? `R$ ${form.fixedSalary}` : "A definir"}</strong>
+                      </div>
+                      <div className="review-item">
+                        <label style={{ display: "block", fontSize: "0.75rem", opacity: 0.7 }}>Jornada</label>
+                        <strong>{selectedJourney?.name || "Nao selecionada"}</strong>
+                      </div>
+                      <div className="review-item">
+                        <label style={{ display: "block", fontSize: "0.75rem", opacity: 0.7 }}>Benefícios</label>
+                        <strong>{form.linkedBenefits.length} vinculados</strong>
+                      </div>
+                    </div>
                   </div>
 
                   <div className="form-grid">
@@ -1475,7 +1913,7 @@ export function WorkProfileEditorPage({ mode, profileId }: Props) {
                           : undefined
                       }
                     >
-                      Modelo de contrato
+                      Modelo de Documento (Contrato)
                       <select
                         className="select"
                         value={form.contractTemplateKey}
@@ -1898,9 +2336,9 @@ function mapProfileToForm(profile: WorkProfile): FormState {
   };
   return {
     ...defaultForm,
-    name: profile.name,
     description: profile.description ?? "",
     isActive: profile.isActive,
+    cargoId: profile.cargoId ?? "",
     cargoName: profile.cargoName,
     cargoLevel: profileExtra.cargoLevel ?? "",
     contractType: profile.contractType,
@@ -1924,6 +2362,11 @@ function mapProfileToForm(profile: WorkProfile): FormState {
     contractTemplateVersion: profile.remuneration.contractTemplateVersion ?? "",
     usesOvertime: profile.usesOvertime,
     overtimeTemplateId: profile.overtimeTemplateId ?? "",
+    usesNightPolicy: profile.usesNightPolicy,
+    nightTemplateId: profile.nightTemplateId ?? "",
+    holidayScopeType: profile.holidayScopeType ?? "",
+    holidayStateCode: profile.holidayStateCode ?? "",
+    holidayCityCode: profile.holidayCityCode ?? "",
     linkedBenefits: profile.benefits.map((item) =>
       createLinkedBenefitConfig(undefined, {
         benefitId: item.id,
@@ -1937,35 +2380,41 @@ function mapProfileToForm(profile: WorkProfile): FormState {
   };
 }
 
-function resolveCargoByName(cargos: CargoCatalogItem[], cargoName: string): CargoCatalogItem | undefined {
-  const normalizedName = cargoName.trim().toLowerCase();
-  if (!normalizedName) {
+function resolveCargoById(cargos: CargoOption[], cargoId: string): CargoOption | undefined {
+  const normalizedId = cargoId.trim();
+  if (!normalizedId) {
     return undefined;
   }
 
-  return cargos.find((item) => item.name.trim().toLowerCase() === normalizedName);
+  return cargos.find((item) => item.id === normalizedId);
+}
+
+function buildJourneyOptionDetails(journey: WorkJourneyTemplate): string {
+  const summary = summarizeWorkJourney(journey).slice(0, 2).join(" | ");
+  if (journey.description && journey.description.trim().length > 0) {
+    return `${journey.description.trim()} | ${summary}`;
+  }
+  return summary;
 }
 
 function validateFieldErrors(
   form: FormState,
   options: {
-    cargos: CargoCatalogItem[];
+    cargos: CargoOption[];
     cargoLevelOptions: string[];
     journeyOptions: WorkJourneyTemplate[];
     overtimeTemplates: OvertimeTemplate[];
+    nightTemplates: OvertimeTemplate[];
     contractTemplateOptions: ContractTemplateOption[];
+    contractTypeOptions: EmploymentLinkageOption[];
     isLaborContract: boolean;
     allowsOvertimePolicy: boolean;
   }
 ): FormFieldErrors {
   const errors: FormFieldErrors = {};
 
-  if (form.name.trim().length < 3) {
-    errors.name = "Nome do perfil precisa ter ao menos 3 caracteres.";
-  }
-
-  const selectedCargo = resolveCargoByName(options.cargos, form.cargoName);
-  if (!form.cargoName.trim()) {
+  const selectedCargo = resolveCargoById(options.cargos, form.cargoId);
+  if (!form.cargoId.trim()) {
     errors.cargoName = "Selecione um cargo.";
   } else if (!selectedCargo) {
     errors.cargoName = "Cargo selecionado nao existe entre os cargos ativos.";
@@ -1974,8 +2423,8 @@ function validateFieldErrors(
   const levelOptions =
     options.cargoLevelOptions.length > 0
       ? options.cargoLevelOptions
-      : selectedCargo?.levels ?? listCargoLevelsByName(form.cargoName);
-  if (form.cargoName.trim()) {
+      : selectedCargo?.levels ?? [];
+  if (form.cargoId.trim()) {
     if (!form.cargoLevel.trim()) {
       errors.cargoLevel = "Selecione um nivel.";
     } else if (
@@ -1988,6 +2437,13 @@ function validateFieldErrors(
 
   if (!isValidContractType(form.contractType)) {
     errors.contractType = "Selecione um vinculo valido.";
+  } else {
+    const selectedContractType = options.contractTypeOptions.find(
+      (item) => item.value === form.contractType
+    );
+    if (!selectedContractType) {
+      errors.contractType = "Selecione um vinculo ativo configurado na empresa.";
+    }
   }
 
   if (options.isLaborContract) {
@@ -1995,6 +2451,11 @@ function validateFieldErrors(
       errors.journeyTemplateId = "Selecione uma jornada de trabalho.";
     } else if (!options.journeyOptions.some((item) => item.id === form.journeyTemplateId)) {
       errors.journeyTemplateId = "Jornada selecionada nao existe.";
+    } else {
+      const selectedJourney = options.journeyOptions.find((item) => item.id === form.journeyTemplateId);
+      if (!selectedJourney?.dsrPolicy?.enabled) {
+        errors.journeyTemplateId = "A jornada selecionada precisa ter politica de DSR configurada.";
+      }
     }
   } else {
     if (!isValidEngagementType(form.engagementType)) {
@@ -2014,7 +2475,8 @@ function validateFieldErrors(
     }
   }
 
-  if (form.contractType === "CLT_INTERMITENTE") {
+  const capabilities = getEmploymentLinkageCapabilities(form.contractType);
+  if (capabilities.usesIntermittentRemunerationFlow) {
     if (!isValidBaseRemunerationType(form.baseRemunerationType)) {
       errors.baseRemunerationType = "Selecione uma remuneracao base valida.";
     }
@@ -2068,6 +2530,29 @@ function validateFieldErrors(
     }
   }
 
+  if (options.isLaborContract && form.usesNightPolicy) {
+    if (!form.nightTemplateId) {
+      errors.nightTemplateId = "Selecione uma politica de adicional noturno.";
+    } else if (!options.nightTemplates.some((item) => item.id === form.nightTemplateId)) {
+      errors.nightTemplateId = "Politica de adicional noturno selecionada nao existe.";
+    }
+  }
+
+  if (options.isLaborContract && form.holidayScopeType === "STATE") {
+    if (form.holidayStateCode.trim().length !== 2) {
+      errors.holidayStateCode = "Informe a UF com 2 letras para feriado estadual.";
+    }
+  }
+
+  if (options.isLaborContract && form.holidayScopeType === "CITY") {
+    if (form.holidayStateCode.trim().length !== 2) {
+      errors.holidayStateCode = "Informe a UF com 2 letras para feriado municipal.";
+    }
+    if (form.holidayCityCode.trim().length < 2) {
+      errors.holidayCityCode = "Informe a cidade para feriado municipal.";
+    }
+  }
+
   const benefitIds = form.linkedBenefits.map((item) => item.benefitId).filter(Boolean);
   if (new Set(benefitIds).size !== benefitIds.length) {
     errors.linkedBenefits = "Existem beneficios duplicados. Revise os vinculados.";
@@ -2086,32 +2571,57 @@ function validateFieldErrors(
   return errors;
 }
 
+function buildAutomaticProfileName(form: Pick<FormState, "cargoName" | "cargoLevel" | "contractType">): string {
+  const cargoName = form.cargoName.trim();
+  const cargoLevel = form.cargoLevel.trim();
+  const contractLabel = resolveContractLabel(form.contractType);
+  const cargoWithLevel = [cargoName, cargoLevel].filter((item) => item.length > 0).join(" ");
+
+  if (cargoWithLevel.length > 0) {
+    return `${cargoWithLevel} - ${contractLabel}`;
+  }
+
+  return `Perfil - ${contractLabel}`;
+}
+
 function buildPayload(params: {
   form: FormState;
   isLaborContract: boolean;
   allowsOvertimePolicy: boolean;
+  usesIntermittentRemunerationFlow: boolean;
   selectedJourney?: WorkJourneyTemplate;
   selectedJourneySummary: string;
   selectedOvertime?: OvertimeTemplate;
+  selectedNight?: OvertimeTemplate;
   selectedContractTemplate?: ContractTemplateOption;
 }) {
   const {
     form,
     isLaborContract,
     allowsOvertimePolicy,
+    usesIntermittentRemunerationFlow,
     selectedJourney,
     selectedJourneySummary,
     selectedOvertime,
+    selectedNight,
     selectedContractTemplate
   } = params;
   const journeyReferenceId = form.journeyTemplateId ? selectedJourney?.id : undefined;
   const usesOvertime = allowsOvertimePolicy ? form.usesOvertime : false;
+  const usesNightPolicy = isLaborContract ? form.usesNightPolicy : false;
+  const holidayScopeType = isLaborContract ? form.holidayScopeType || undefined : undefined;
+  const holidayStateCode =
+    holidayScopeType === "STATE" || holidayScopeType === "CITY"
+      ? form.holidayStateCode.trim().toUpperCase() || undefined
+      : undefined;
+  const holidayCityCode =
+    holidayScopeType === "CITY" ? form.holidayCityCode.trim() || undefined : undefined;
 
   return {
-    name: form.name.trim(),
+    name: buildAutomaticProfileName(form),
     description: form.description.trim() || undefined,
     isActive: form.isActive,
-    cargoName: form.cargoName.trim(),
+    cargoId: form.cargoId.trim(),
     cargoLevel: form.cargoLevel.trim() || undefined,
     contractType: form.contractType,
     engagementType: isLaborContract ? undefined : form.engagementType,
@@ -2128,22 +2638,22 @@ function buildPayload(params: {
     journeySummary: selectedJourneySummary || undefined,
     remuneration: {
       model:
-        form.contractType === "CLT_INTERMITENTE"
+        usesIntermittentRemunerationFlow
           ? form.hasVariableCompensation
             ? "FIXED_PLUS_COMMISSION"
             : "FIXED"
           : form.remunerationModel,
-      baseType: form.contractType === "CLT_INTERMITENTE" ? form.baseRemunerationType : undefined,
+      baseType: usesIntermittentRemunerationFlow ? form.baseRemunerationType : undefined,
       hasVariableCompensation:
-        form.contractType === "CLT_INTERMITENTE" ? form.hasVariableCompensation : undefined,
+        usesIntermittentRemunerationFlow ? form.hasVariableCompensation : undefined,
       fixedSalary:
-        form.contractType === "CLT_INTERMITENTE"
+        usesIntermittentRemunerationFlow
           ? toNumber(form.fixedSalary)
           : form.remunerationModel === "COMMISSION_ONLY"
             ? undefined
             : toNumber(form.fixedSalary),
       commissionType:
-        form.contractType === "CLT_INTERMITENTE"
+        usesIntermittentRemunerationFlow
           ? form.hasVariableCompensation
             ? form.commissionType
             : undefined
@@ -2151,7 +2661,7 @@ function buildPayload(params: {
             ? undefined
             : form.commissionType,
       commissionValue:
-        form.contractType === "CLT_INTERMITENTE"
+        usesIntermittentRemunerationFlow
           ? form.hasVariableCompensation
             ? toNumber(form.commissionValue)
             : undefined
@@ -2159,7 +2669,7 @@ function buildPayload(params: {
             ? undefined
             : toNumber(form.commissionValue),
       commissionRule:
-        form.contractType === "CLT_INTERMITENTE"
+        usesIntermittentRemunerationFlow
           ? form.hasVariableCompensation
             ? form.commissionRule.trim() || undefined
             : undefined
@@ -2178,6 +2688,20 @@ function buildPayload(params: {
       usesOvertime && selectedOvertime
         ? [selectedOvertime.name, selectedOvertime.description].filter(Boolean).join(" | ")
         : undefined,
+    usesNightPolicy,
+    nightTemplateId: usesNightPolicy ? selectedNight?.id : undefined,
+    nightTemplateName: usesNightPolicy ? selectedNight?.name : undefined,
+    nightSummary:
+      usesNightPolicy && selectedNight
+        ? [selectedNight.name, selectedNight.description].filter(Boolean).join(" | ")
+        : undefined,
+    holidayScopeType,
+    holidayStateCode,
+    holidayCityCode,
+    holidaySummary:
+      isLaborContract && holidayScopeType
+        ? buildHolidayScopePreview(holidayScopeType, holidayStateCode, holidayCityCode)
+        : undefined,
     benefits: form.linkedBenefits.map((item) => ({
       id: item.benefitId,
       name: item.benefitName,
@@ -2192,12 +2716,21 @@ function buildPayload(params: {
 function buildSummary(params: {
   form: FormState;
   isLaborContract: boolean;
+  allowsOvertimePolicy: boolean;
   selectedJourney?: WorkJourneyTemplate;
   selectedOvertime?: OvertimeTemplate;
+  selectedNight?: OvertimeTemplate;
   selectedContractTemplate?: ContractTemplateOption;
 }): string {
-  const { form, isLaborContract, selectedJourney, selectedOvertime, selectedContractTemplate } =
-    params;
+  const {
+    form,
+    isLaborContract,
+    allowsOvertimePolicy,
+    selectedJourney,
+    selectedOvertime,
+    selectedNight,
+    selectedContractTemplate
+  } = params;
   const intro = `Perfil ${resolveContractLabel(form.contractType)}${
     form.cargoName.trim() ? ` para o cargo ${form.cargoName.trim()}` : ""
   }${form.cargoLevel.trim() ? ` no nivel ${form.cargoLevel.trim()}` : ""}`;
@@ -2226,7 +2759,7 @@ function buildSummary(params: {
     }
   }
 
-  if (form.contractType === "CLT" && form.usesOvertime) {
+  if (allowsOvertimePolicy && form.usesOvertime) {
     details.push(
       selectedOvertime
         ? `com politica de hora extra "${selectedOvertime.name}"`
@@ -2234,6 +2767,34 @@ function buildSummary(params: {
     );
   } else if (isLaborContract) {
     details.push("sem politica de hora extra");
+  }
+
+  if (isLaborContract && form.usesNightPolicy) {
+    details.push(
+      selectedNight
+        ? `com adicional noturno "${selectedNight.name}"`
+        : "com adicional noturno ativado e politica pendente"
+    );
+  } else if (isLaborContract) {
+    details.push("sem adicional noturno");
+  }
+
+  if (isLaborContract && selectedJourney?.dsrPolicy?.enabled) {
+    details.push("DSR definido na jornada");
+  } else if (isLaborContract) {
+    details.push("DSR sem politica dedicada");
+  }
+
+  if (isLaborContract && form.holidayScopeType) {
+    details.push(
+      buildHolidayScopePreview(
+        form.holidayScopeType,
+        form.holidayStateCode.trim().toUpperCase() || undefined,
+        form.holidayCityCode.trim() || undefined
+      )
+    );
+  } else if (isLaborContract) {
+    details.push("feriados sem escopo configurado");
   }
 
   if (form.linkedBenefits.length > 0) {
@@ -2286,6 +2847,20 @@ function buildOvertimePreview(template?: OvertimeTemplate): string | null {
     return `${template.name} - ${template.description.trim()}`;
   }
   return template.name;
+}
+
+function buildHolidayScopePreview(
+  scopeType: HolidayScopeType,
+  stateCode?: string,
+  cityCode?: string
+): string {
+  if (scopeType === "CITY") {
+    return `Feriados municipais (${cityCode ?? "cidade"} - ${stateCode ?? "UF"})`;
+  }
+  if (scopeType === "STATE") {
+    return `Feriados estaduais (${stateCode ?? "UF"})`;
+  }
+  return "Feriados nacionais";
 }
 
 function buildBenefitsPreview(linkedBenefits: LinkedBenefitConfig[]): string {
@@ -2472,7 +3047,8 @@ function buildRemunerationSummary(
   form: FormState,
   contractType: WorkProfileContractType
 ): string | null {
-  if (contractType !== "CLT_INTERMITENTE") {
+  const capabilities = getEmploymentLinkageCapabilities(contractType);
+  if (!capabilities.usesIntermittentRemunerationFlow) {
     if (form.remunerationModel === "FIXED") {
       const fixedSalary = toNumber(form.fixedSalary);
       if (fixedSalary !== undefined && fixedSalary > 0) {
@@ -2532,21 +3108,11 @@ function buildRemunerationSummary(
 }
 
 function resolveContractLabel(value: WorkProfileContractType): string {
-  if (value === "CLT_INTERMITENTE") return "CLT Intermitente";
-  if (value === "MEI") return "MEI";
-  if (value === "PJ") return "PJ";
-  if (value === "AUTONOMO") return "Autonomo";
-  return "CLT";
+  return resolveEmploymentLinkageTitle(value);
 }
 
 function isValidContractType(value: string): value is WorkProfileContractType {
-  return (
-    value === "CLT" ||
-    value === "CLT_INTERMITENTE" ||
-    value === "MEI" ||
-    value === "PJ" ||
-    value === "AUTONOMO"
-  );
+  return validContractTypes.has(value as WorkProfileContractType);
 }
 
 function isValidEngagementType(value: string): value is EngagementType {

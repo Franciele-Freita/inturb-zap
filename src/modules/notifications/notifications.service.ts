@@ -9,8 +9,9 @@ import { UnregisterPushSubscriptionDto } from "./dto/unregister-push-subscriptio
 
 export interface NotificationItem {
   id: string;
-  type: "NEW_PREBOOKED_RIDE" | "RIDE_ACCEPTED" | "RIDE_REJECTED";
-  rideId: string;
+  type: "NEW_PREBOOKED_RIDE" | "RIDE_ACCEPTED" | "RIDE_REJECTED" | "TIMEKEEPING_MISSING_PUNCH";
+  rideId?: string;
+  eventKey?: string;
   driverId?: string;
   title: string;
   body: string;
@@ -48,12 +49,42 @@ type VapidDetails = {
   generated: boolean;
 };
 
+type TimekeepingMissingPunchAlertInput = {
+  date: string;
+  drivers: Array<{
+    driverId: string;
+    driverName: string;
+    delayed: boolean;
+    state: "NOT_STARTED" | "IN_JOURNEY" | "ON_BREAK" | "FINISHED";
+    expectedMinutes: number;
+    firstEntryAt?: string;
+  }>;
+};
+
+type TimekeepingWhatsappQueueItem = {
+  eventKey: string;
+  phone: string;
+  text: string;
+  enqueuedAt: number;
+};
+
+export interface TimekeepingAlertQueueStatus {
+  processing: boolean;
+  pendingItems: number;
+  pendingEventKeys: string[];
+  dedupTrackedKeys: number;
+  latestEnqueuedAt?: string;
+}
+
 @Injectable()
 export class NotificationsService {
   private static generatedVapidDetails: VapidDetails | null = null;
   private readonly logger = new Logger(NotificationsService.name);
   private readonly notifications: NotificationItem[] = [];
   private readonly vapidDetails = NotificationsService.resolveVapidDetails();
+  private readonly timekeepingWhatsappQueue: TimekeepingWhatsappQueueItem[] = [];
+  private readonly sentTimekeepingEventKeys = new Map<string, number>();
+  private timekeepingQueueProcessing = false;
 
   constructor(private readonly prisma: PrismaService) {
     webpush.setVapidDetails(
@@ -77,6 +108,22 @@ export class NotificationsService {
 
   getPushPublicKey(): string {
     return this.vapidDetails.publicKey;
+  }
+
+  getTimekeepingAlertQueueStatus(): TimekeepingAlertQueueStatus {
+    const pendingEventKeys = [...new Set(this.timekeepingWhatsappQueue.map((item) => item.eventKey))].slice(0, 20);
+    const latestEnqueuedAtMs = this.timekeepingWhatsappQueue.reduce<number | undefined>((latest, item) => {
+      if (latest === undefined) return item.enqueuedAt;
+      return item.enqueuedAt > latest ? item.enqueuedAt : latest;
+    }, undefined);
+
+    return {
+      processing: this.timekeepingQueueProcessing,
+      pendingItems: this.timekeepingWhatsappQueue.length,
+      pendingEventKeys,
+      dedupTrackedKeys: this.sentTimekeepingEventKeys.size,
+      latestEnqueuedAt: latestEnqueuedAtMs ? new Date(latestEnqueuedAtMs).toISOString() : undefined
+    };
   }
 
   async registerPushSubscription(dto: RegisterPushSubscriptionDto): Promise<void> {
@@ -193,6 +240,21 @@ export class NotificationsService {
       url: decision === "ACCEPT" ? `/?tab=mine&rideId=${encodeURIComponent(rideId)}` : "/",
       requireInteraction: false
     });
+  }
+
+  queueTimekeepingMissingPunchAlerts(input: TimekeepingMissingPunchAlertInput): void {
+    const candidates = input.drivers.filter(
+      (driver) =>
+        driver.delayed &&
+        driver.state === "NOT_STARTED" &&
+        driver.expectedMinutes > 0 &&
+        !driver.firstEntryAt
+    );
+    if (candidates.length === 0) {
+      return;
+    }
+
+    void this.queueTimekeepingMissingPunchAlertsAsync(input.date, candidates);
   }
 
   private async broadcastToActiveDrivers(payload: WebPushPayload): Promise<void> {
@@ -388,6 +450,162 @@ export class NotificationsService {
       mobilePath: `/ride/${encodeURIComponent(rideId)}`,
       requireInteraction: true
     });
+  }
+
+  private async queueTimekeepingMissingPunchAlertsAsync(
+    date: string,
+    candidates: Array<{
+      driverId: string;
+      driverName: string;
+      expectedMinutes: number;
+    }>
+  ): Promise<void> {
+    const managerPhones = await this.listTimekeepingManagerPhones();
+    if (managerPhones.length === 0) {
+      return;
+    }
+
+    const nowIso = new Date().toISOString();
+    this.evictOldTimekeepingEventKeys();
+
+    for (const driver of candidates) {
+      const eventKey = `timekeeping:missing-in:${date}:${driver.driverId}`;
+      if (this.sentTimekeepingEventKeys.has(eventKey)) {
+        continue;
+      }
+      this.sentTimekeepingEventKeys.set(eventKey, Date.now());
+
+      const title = "Batida faltante detectada";
+      const body = `Motorista ${driver.driverName} ainda nao iniciou a jornada prevista em ${date}.`;
+      this.notifications.unshift({
+        id: `notification_${this.notifications.length + 1}`,
+        type: "TIMEKEEPING_MISSING_PUNCH",
+        eventKey,
+        driverId: driver.driverId,
+        title,
+        body,
+        createdAt: nowIso
+      });
+
+      const text = [
+        "Alerta de ponto (batida faltante).",
+        `Data: ${date}`,
+        `Motorista: ${driver.driverName}`,
+        `Status: nao iniciou jornada prevista.`
+      ].join("\n");
+
+      for (const phone of managerPhones) {
+        this.timekeepingWhatsappQueue.push({
+          eventKey,
+          phone,
+          text,
+          enqueuedAt: Date.now()
+        });
+      }
+    }
+
+    if (this.timekeepingWhatsappQueue.length > 0) {
+      void this.processTimekeepingWhatsappQueue();
+    }
+  }
+
+  private async processTimekeepingWhatsappQueue(): Promise<void> {
+    if (this.timekeepingQueueProcessing) {
+      return;
+    }
+    this.timekeepingQueueProcessing = true;
+    try {
+      while (this.timekeepingWhatsappQueue.length > 0) {
+        const item = this.timekeepingWhatsappQueue.shift();
+        if (!item) {
+          continue;
+        }
+        await this.sendWhatsappText(item.phone, item.text);
+      }
+    } finally {
+      this.timekeepingQueueProcessing = false;
+    }
+  }
+
+  private async listTimekeepingManagerPhones(): Promise<string[]> {
+    const users = await this.prisma.user.findMany({
+      where: {
+        isActive: true,
+        role: {
+          in: ["ADMIN", "OPERATOR"]
+        },
+        phone: {
+          not: null
+        }
+      },
+      select: {
+        phone: true
+      }
+    });
+    return users
+      .map((user) => this.normalizeWhatsappPhone(user.phone ?? undefined))
+      .filter((phone): phone is string => Boolean(phone));
+  }
+
+  private async sendWhatsappText(phone: string, text: string): Promise<void> {
+    if ((process.env.WHATSAPP_SEND_ENABLED ?? "false").toLowerCase() !== "true") {
+      return;
+    }
+    const accessToken = process.env.WHATSAPP_ACCESS_TOKEN;
+    const phoneNumberId = process.env.WHATSAPP_PHONE_NUMBER_ID;
+    const apiVersion = process.env.WHATSAPP_API_VERSION ?? "v21.0";
+    if (!accessToken || !phoneNumberId) {
+      return;
+    }
+
+    const endpoint = `https://graph.facebook.com/${apiVersion}/${phoneNumberId}/messages`;
+    try {
+      const response = await fetch(endpoint, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          messaging_product: "whatsapp",
+          recipient_type: "individual",
+          to: phone,
+          type: "text",
+          text: {
+            body: text
+          }
+        })
+      });
+      if (!response.ok) {
+        const payload = (await response.json().catch(() => ({}))) as { error?: { message?: string } };
+        const errorMessage = payload.error?.message ?? `Erro HTTP ${response.status}`;
+        this.logger.warn(`Falha no alerta de ponto via WhatsApp para ${phone}: ${errorMessage}`);
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Erro inesperado no envio WhatsApp.";
+      this.logger.warn(`Falha de rede no alerta de ponto para ${phone}: ${message}`);
+    }
+  }
+
+  private normalizeWhatsappPhone(value: string | undefined): string | undefined {
+    if (!value) {
+      return undefined;
+    }
+    const digits = value.replace(/\D/g, "");
+    if (digits.length < 10) {
+      return undefined;
+    }
+    return digits;
+  }
+
+  private evictOldTimekeepingEventKeys(): void {
+    const maxAgeMs = 12 * 60 * 60 * 1000;
+    const now = Date.now();
+    for (const [key, timestamp] of this.sentTimekeepingEventKeys.entries()) {
+      if (now - timestamp > maxAgeMs) {
+        this.sentTimekeepingEventKeys.delete(key);
+      }
+    }
   }
 
   private toShortAddress(value: string): string {

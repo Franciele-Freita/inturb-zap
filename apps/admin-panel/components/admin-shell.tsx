@@ -43,22 +43,45 @@ const pageMeta: Array<{ href: string; title: string; subtitle: string }> = [
   { href: "/documents/templates/variables", title: "Variaveis", subtitle: "Dicionario de variaveis disponiveis para templates de documentos." },
   { href: "/documents/templates", title: "Templates", subtitle: "Gestao de modelos reutilizaveis para contratos e termos operacionais." },
   { href: "/documents", title: "Templates", subtitle: "Gestao de modelos reutilizaveis para contratos e termos operacionais." },
-  { href: "/settings/company", title: "Configuracoes", subtitle: "Dados institucionais da empresa para contratos e operacao." },
-  { href: "/fleet/veiculos", title: "Veiculos", subtitle: "Gestao de veiculos e listagem da base operacional." },
+  { href: "/settings/auxiliary-tables/cbo", title: "CBO", subtitle: "Tabela auxiliar da Classificacao Brasileira de Ocupacoes." },
+  { href: "/settings/company", title: "Dados da empresa", subtitle: "Dados institucionais da empresa para contratos e operacao." },
+  { href: "/settings", title: "Configuracoes", subtitle: "Central de ajustes da conta e da empresa no painel." },
+  { href: "/fleet/veiculos", title: "Frota: Veiculos", subtitle: "Gestao de veiculos e listagem da base operacional." },
   { href: "/fleet/manutencao", title: "Manutencao", subtitle: "Ordens de servico, planos e vencimentos dos veiculos." },
+  { href: "/fleet/checklists/realizados", title: "Checklist: Realizados", subtitle: "Acompanhamento das execucoes e pendencias de checklist dos veiculos." },
   { href: "/fleet/checklists", title: "Checklist", subtitle: "Rotinas e listas operacionais aplicadas aos veiculos." },
   { href: "/fleet", title: "Frota", subtitle: "Visao geral, veiculos, manutencao e checklists da frota." },
   { href: "/customers", title: "Clientes", subtitle: "Perfil, historico de corridas e registros de conversa." },
   { href: "/profile", title: "Meu perfil", subtitle: "Dados do operador logado e configuracoes locais da sessao." },
-  { href: "/support", title: "Suporte", subtitle: "Central de atendimento para clientes e motoristas." },
+  { href: "/support", title: "Atendimento", subtitle: "Central de suporte para clientes e motoristas." },
   { href: "/trip-types", title: "Tipos de viagem", subtitle: "Categorias disponiveis para o passageiro solicitar." },
   { href: "/compensation", title: "Remuneracao", subtitle: "Templates reutilizaveis de configuracao do step 6 dos motoristas." },
   { href: "/administrative/cargo", title: "Cargo", subtitle: "Estruture os cargos da sua operação e padronize funções, equipes e contratos." },
   { href: "/administrative/work-profiles", title: "Perfis de trabalho", subtitle: "Crie e gerencie perfis de trabalho com jornada, remuneração e regras operacionais." },
   { href: "/administrative/benefits", title: "Beneficios", subtitle: "Crie e gerencie benefícios utilizados em perfis de trabalho e contratos." },
   { href: "/administrative/scales", title: "Jornadas de trabalho", subtitle: "Crie e gerencie jornadas de trabalho para padronizar turnos e escalas da operação." },
-  { href: "/administrative/overtime", title: "Politica de hora extra", subtitle: "Politicas de hora extra reutilizaveis por perfil de trabalho." },
+  { href: "/administrative/timekeeping/register", title: "Registrar ponto", subtitle: "Lancamento manual de batidas de ponto." },
+  { href: "/administrative/timekeeping/mirror", title: "Espelho de ponto", subtitle: "Consulta de batidas, horas trabalhadas e pendencias." },
+  { href: "/administrative/timekeeping/adjustments", title: "Ajustes", subtitle: "Solicitacao e gerenciamento de correcoes de ponto." },
+  { href: "/administrative/timekeeping/approvals", title: "Aprovacoes", subtitle: "Validacao de solicitacoes de ajuste por gestores e RH." },
+  { href: "/administrative/timekeeping", title: "Espelho de ponto", subtitle: "Consulta de batidas, horas trabalhadas e pendencias." },
+  { href: "/administrative/payroll", title: "Folha de pagamento", subtitle: "Gestao da folha de RH com integracao financeira para contas a pagar." },
+  { href: "/financial/accounts-payable", title: "Contas a pagar", subtitle: "Controle de despesas, vencimentos, pagamentos e comprovantes." },
+  { href: "/financial/accounts-receivable", title: "Contas a receber", subtitle: "Gestao de receitas, cobrancas e recebimentos." },
+  { href: "/financial/cash-flow", title: "Fluxo de caixa", subtitle: "Entradas, saidas e saldo acumulado por periodo e filtros operacionais." },
+  { href: "/financial/entries", title: "Lancamentos financeiros", subtitle: "Visao unificada de receitas e despesas por origem e status." },
+  { href: "/financial/categories", title: "Categorias financeiras", subtitle: "Classifique receitas e despesas para analise gerencial." },
+  { href: "/financial/cost-centers", title: "Centros de custo", subtitle: "Agrupe receitas e despesas por area da operacao." },
+  { href: "/financial/payment-methods", title: "Formas de pagamento", subtitle: "Padronize meios de pagamento e recebimento da operacao." },
+  { href: "/financial/accounts", title: "Contas bancarias / caixas", subtitle: "Cadastro de contas financeiras para movimentacao e conciliacao." },
+  { href: "/financial/reconciliation", title: "Conciliacao bancaria", subtitle: "Marque transacoes conciliadas e vincule aos lancamentos." },
+  { href: "/financial/invoices", title: "Faturas e cobrancas", subtitle: "Gere e acompanhe cobrancas de contratos e viagens." },
+  { href: "/financial/receipts", title: "Recibos e comprovantes", subtitle: "Central de documentos financeiros anexados no sistema." },
+  { href: "/financial/reports", title: "Relatorios financeiros", subtitle: "Receitas, despesas, resultado e previsao de caixa." },
+  { href: "/financial", title: "Dashboard financeiro", subtitle: "Resumo de caixa, receitas, despesas e saude financeira." },
+  { href: "/administrative/overtime", title: "Politica de hora extra", subtitle: "Politicas de hora extra reutilizaveis na operacao." },
   { href: "/administrative/night-policies", title: "Regras de adicional noturno", subtitle: "Politicas de adicional noturno reutilizaveis por perfil de trabalho." },
+  { href: "/administrative/holidays", title: "Feriados", subtitle: "Cadastre feriados nacionais, estaduais e municipais para padronizar regras por localidade." },
   { href: "/pricing", title: "Precificacao", subtitle: "Tarifa do passageiro, regras tarifarias e repasse dos motoristas." },
   { href: "/notifications", title: "Notificacoes", subtitle: "Alertas e eventos operacionais disparados pelo backend." },
   { href: "/rides", title: "Operacao de Corridas", subtitle: "Central operacional com fila, andamento e encerramento das corridas." },
@@ -740,7 +763,7 @@ export function AdminShell({ children }: AdminShellProps) {
             </div>
 
            {/*  <div className="sidebar-footer-card">
-              <span className="sidebar-footer-emoji">🛠️</span>
+              <span className="sidebar-footer-emoji">ÃƒÆ’Ã‚Â°Ãƒâ€¦Ã‚Â¸ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂºÃƒâ€šÃ‚Â ÃƒÆ’Ã‚Â¯Ãƒâ€šÃ‚Â¸Ãƒâ€šÃ‚Â</span>
               <strong>Workspace ativo</strong>
               <p>Gestao centralizada de cadastro, operacao e configuracoes da plataforma.</p>
             </div> */}
@@ -758,7 +781,7 @@ export function AdminShell({ children }: AdminShellProps) {
 
             <div className="admin-header-meta">
               <Link
-                href="/settings/company"
+                href="/settings"
                 className={pathname.startsWith("/settings") ? "admin-header-icon-button is-active" : "admin-header-icon-button"}
                 aria-label="Configuracoes"
                 title="Configuracoes"
@@ -769,8 +792,8 @@ export function AdminShell({ children }: AdminShellProps) {
               <Link
                 href="/support"
                 className={pathname.startsWith("/support") ? "admin-header-icon-button is-active" : "admin-header-icon-button"}
-                aria-label="Suporte"
-                title="Suporte"
+                aria-label="Atendimento"
+                title="Atendimento"
               >
                 <HeadsetIcon />
               </Link>
@@ -812,6 +835,9 @@ export function AdminShell({ children }: AdminShellProps) {
                     <div className="admin-header-profile-dropdown-actions">
                       <Link href="/profile" className="admin-header-profile-dropdown-item" role="menuitem">
                         Perfil
+                      </Link>
+                      <Link href="/settings/company" className="admin-header-profile-dropdown-item" role="menuitem">
+                        Dados da empresa
                       </Link>
                       <button
                         type="button"

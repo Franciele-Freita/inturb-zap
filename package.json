@@ -19,7 +19,8 @@
     "prisma:generate": "prisma generate",
     "prisma:migrate": "prisma migrate dev",
     "prisma:push": "prisma db push",
-    "webpush:keys": "node scripts/generate-web-push-keys.cjs"
+    "webpush:keys": "node scripts/generate-web-push-keys.cjs",
+    "cbo:import": "ts-node --transpile-only scripts/import-cbo.ts"
   },
   "dependencies": {
     "@nestjs/common": "^11.1.6",

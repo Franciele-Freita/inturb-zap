@@ -124,6 +124,25 @@ function digitsOnly(value: string): string {
   return value.replace(/\D/g, "");
 }
 
+function validateCpf(cpf: string): boolean {
+  const cleanCpf = digitsOnly(cpf);
+  if (cleanCpf.length !== 11 || !!cleanCpf.match(/(\d)\1{10}/)) return false;
+  
+  const calc = (slice: string, factor: number) => 
+    (slice.split("").reduce((acc, digit, idx) => acc + parseInt(digit) * (factor - idx), 0) * 10) % 11 % 10;
+
+  return calc(cleanCpf.slice(0, 9), 10) === parseInt(cleanCpf[9]) && 
+         calc(cleanCpf.slice(0, 10), 11) === parseInt(cleanCpf[10]);
+}
+
+
+
+
+function formatCpf(value: string): string {
+  const d = digitsOnly(value).slice(0, 11);
+  return d.replace(/(\d{3})(\d{3})(\d{3})(\d{2})/, "$1.$2.$3-$4");
+}
+
 function formatCepInput(value: string): string {
   const digits = digitsOnly(value).slice(0, 8);
 
@@ -145,21 +164,18 @@ function validateAddressDraft(value: AddressState, withoutNumber: boolean): {
   if (cep.length !== 8) {
     missingFields.push("cep");
   }
-  if (value.addressType !== "OWN" && value.addressType !== "RENTED") {
+  if (!value.addressType) {
     missingFields.push("addressType");
   }
-  if (!withoutNumber && !(value.number ?? "").trim()) {
+  if (!withoutNumber && !value.number?.trim()) {
     missingFields.push("number");
   }
-  if (!(value.street ?? "").trim()) {
-    missingFields.push("street");
-  }
-  if (!(value.neighborhood ?? "").trim()) {
-    missingFields.push("neighborhood");
-  }
-  if (!(value.city ?? "").trim()) {
-    missingFields.push("city");
-  }
+  
+  const requiredStrings: AddressFieldKey[] = ["street", "neighborhood", "city"];
+  requiredStrings.forEach(field => {
+    if (!value[field]?.trim()) missingFields.push(field);
+  });
+
   if (state.length !== 2 || !brazilianStates.has(state)) {
     missingFields.push("state");
   }
@@ -456,7 +472,7 @@ export function DriverProfileEditorPersonalSection({
 
       cepLookupCacheRef.current[cep] = payload;
       applyCepLookup(cep, payload);
-    } catch {
+    } catch (error) {
       if (error instanceof Error && error.name === 'AbortError') {
         setAddressLookupMessage("A consulta ao CEP demorou demais. Tente novamente.");
       } else {

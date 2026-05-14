@@ -15,6 +15,7 @@ type DriverProfileEditorModalProps = {
   lockBodyScroll?: boolean;
   dialogWidth?: string;
   bodyScrollable?: boolean;
+  dialogClassName?: string;
 };
 
 export function DriverProfileEditorModal({
@@ -28,7 +29,8 @@ export function DriverProfileEditorModal({
   layoutVariant = "center",
   lockBodyScroll = true,
   dialogWidth,
-  bodyScrollable = true
+  bodyScrollable = true,
+  dialogClassName
 }: DriverProfileEditorModalProps) {
   const [mounted, setMounted] = useState(false);
 
@@ -74,7 +76,7 @@ export function DriverProfileEditorModal({
       onClick={onClose}
     >
       <div
-        className={`driver-editor-modal${layoutVariant === "drawer" ? " is-drawer" : ""}${layoutVariant === "quick" ? " is-quick" : ""}`}
+        className={`driver-editor-modal${layoutVariant === "drawer" ? " is-drawer" : ""}${layoutVariant === "quick" ? " is-quick" : ""}${dialogClassName ? ` ${dialogClassName}` : ""}`}
         style={dialogWidth ? { width: dialogWidth } : undefined}
         onClick={(event) => event.stopPropagation()}
       >

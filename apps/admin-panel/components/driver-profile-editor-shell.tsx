@@ -8,8 +8,7 @@ export type DriverEditorSection =
   | "contact"
   | "compliance"
   | "accessibility"
-  | "contract"
-  | "contracts";
+  | "contract";
 
 type SidebarStatusCheck = {
   label: string;
@@ -29,6 +28,7 @@ type DriverProfileEditorHeroProps = {
 
 type DriverProfileEditorStepNavProps = {
   activeSection: DriverEditorSection;
+  blockedSections?: DriverEditorSection[];
   onSectionChange: (section: DriverEditorSection) => void;
 };
 
@@ -98,6 +98,7 @@ export function DriverProfileEditorHero({
 
 export function DriverProfileEditorStepNav({
   activeSection,
+  blockedSections = [],
   onSectionChange
 }: DriverProfileEditorStepNavProps) {
   const steps: Array<{ key: DriverEditorSection; index: string; title: string; description: string }> = [
@@ -105,14 +106,14 @@ export function DriverProfileEditorStepNav({
     { key: "compliance", index: "02", title: "CNH e conformidade", description: "CNH, toxicologico e psicotecnico" },
     { key: "contact", index: "03", title: "Contato e emergencia", description: "Contato principal e sinistro" },
     { key: "accessibility", index: "04", title: "Acessibilidade", description: "Condicoes especiais" },
-    { key: "contract", index: "05", title: "Contrato de trabalho", description: "Vinculo, jornada e pagamento" },
-    { key: "contracts", index: "06", title: "Contratos", description: "Geracao, assinatura e historico" }
+    { key: "contract", index: "05", title: "Contrato de trabalho", description: "Vinculo, jornada e pagamento" }
   ];
-  const activeIndex = Math.max(
-    steps.findIndex((step) => step.key === activeSection),
-    0
-  );
-  const progress = Math.round(((activeIndex + 1) / steps.length) * 100);
+  const blocked = new Set(blockedSections);
+  const activeIndex = Math.max(steps.findIndex((step) => step.key === activeSection), 0);
+  const completedWithinProgress = steps
+    .slice(0, activeIndex + 1)
+    .filter((step) => !blocked.has(step.key)).length;
+  const progress = Math.round((completedWithinProgress / steps.length) * 100);
 
   return (
     <section className="driver-editor-stepbar" aria-label="Etapas do cadastro">
@@ -128,7 +129,8 @@ export function DriverProfileEditorStepNav({
       <div className="driver-editor-stepnav">
         {steps.map((step, index) => {
           const isActive = activeSection === step.key;
-          const isCompleted = index < activeIndex;
+          const isCompleted = index < activeIndex && !blocked.has(step.key);
+          const isBlocked = blocked.has(step.key);
 
           return (
             <button
@@ -137,13 +139,14 @@ export function DriverProfileEditorStepNav({
               className={[
                 "driver-editor-stepchip",
                 isActive ? "is-active" : "",
-                isCompleted ? "is-complete" : ""
+                isCompleted ? "is-complete" : "",
+                isBlocked ? "is-blocked" : ""
               ]
                 .filter(Boolean)
                 .join(" ")}
               onClick={() => onSectionChange(step.key)}
             >
-              <span>{step.index}</span>
+              <span>{isBlocked ? "!" : step.index}</span>
               <div className="driver-editor-stepcopy">
                 <strong>{step.title}</strong>
                 <small>{step.description}</small>

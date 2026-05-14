@@ -10,142 +10,26 @@ export type CargoCatalogItem = {
   updatedAt: string;
 };
 
-const STORAGE_KEY = "admin_panel_administrative_cargo_v1";
 const DEFAULT_CARGO_LEVEL = "OPERACIONAL";
-const DEFAULT_CARGO_DEPARTMENT = "Opera\u00e7\u00f5es";
 const DEFAULT_CARGO_SENIORITY_LEVELS = ["Junior", "Pleno", "Senior"] as const;
+const CARGO_LEADERSHIP_LEVELS = ["LIDERANCA", "GESTAO", "ESTRATEGICO"] as const;
+const CARGO_PRIMARY_LEVELS = [
+  "OPERACIONAL",
+  "TECNICO",
+  "ADMINISTRATIVO",
+  ...CARGO_LEADERSHIP_LEVELS
+] as const;
 
 const CARGO_DEPARTMENT_FALLBACK_OPTIONS = [
   "Administrativo",
   "Comercial",
   "Financeiro",
   "RH",
-  "Opera\u00e7\u00f5es"
+  "Operacoes"
 ];
 
-const defaultCargoItems: CargoCatalogItem[] = [
-  {
-    id: "cargo_motorista_frota",
-    name: "Motorista de frota",
-    description: "Conducao operacional de veiculos da frota em rotas programadas.",
-    department: "Opera\u00e7\u00f5es",
-    level: "OPERACIONAL",
-    levels: [...DEFAULT_CARGO_SENIORITY_LEVELS],
-    isActive: true,
-    createdAt: "2026-04-10T13:00:00.000Z",
-    updatedAt: "2026-04-12T10:30:00.000Z"
-  },
-  {
-    id: "cargo_motorista_agregado",
-    name: "Motorista agregado",
-    description: "Operacao com veiculo agregado seguindo padroes e janelas definidas.",
-    department: "Opera\u00e7\u00f5es",
-    level: "OPERACIONAL",
-    levels: [...DEFAULT_CARGO_SENIORITY_LEVELS],
-    isActive: true,
-    createdAt: "2026-04-10T13:10:00.000Z",
-    updatedAt: "2026-04-11T17:45:00.000Z"
-  },
-  {
-    id: "cargo_monitor_operacional",
-    name: "Monitor operacional",
-    description: "Acompanha desempenho da operacao e direciona ajustes taticos.",
-    department: "Opera\u00e7\u00f5es",
-    level: "LIDERANCA",
-    levels: ["Pleno", "Senior"],
-    isActive: false,
-    createdAt: "2026-04-10T13:20:00.000Z",
-    updatedAt: "2026-04-10T13:20:00.000Z"
-  }
-];
-
-export function sortCargoCatalogByName(items: CargoCatalogItem[]): CargoCatalogItem[] {
+export function sortCargoCatalogByName<T extends Pick<CargoCatalogItem, "name">>(items: T[]): T[] {
   return [...items].sort((a, b) => a.name.localeCompare(b.name, "pt-BR"));
-}
-
-export function loadCargoCatalogItems(): CargoCatalogItem[] {
-  if (typeof window === "undefined") {
-    return sortCargoCatalogByName(defaultCargoItems);
-  }
-
-  const raw = window.localStorage.getItem(STORAGE_KEY);
-  if (!raw) {
-    return sortCargoCatalogByName(defaultCargoItems);
-  }
-
-  try {
-    const parsed = JSON.parse(raw) as CargoCatalogItem[];
-    if (!Array.isArray(parsed)) {
-      return sortCargoCatalogByName(defaultCargoItems);
-    }
-
-    return sortCargoCatalogByName(
-      parsed
-        .filter((item) => item && typeof item === "object")
-        .map((item) => ({
-          id: typeof item.id === "string" && item.id.trim() ? item.id : `cargo_${Date.now()}`,
-          name: typeof item.name === "string" && item.name.trim() ? item.name : "Cargo sem nome",
-          description:
-            typeof item.description === "string" && item.description.trim().length > 0
-              ? item.description.trim()
-              : undefined,
-          department:
-            typeof item.department === "string" && item.department.trim()
-              ? normalizeCargoDepartment(item.department)
-              : DEFAULT_CARGO_DEPARTMENT,
-          level:
-            typeof item.level === "string" && item.level.trim()
-              ? normalizeCargoLevel(item.level)
-              : DEFAULT_CARGO_LEVEL,
-          levels: normalizeCargoSeniorityLevels(item.levels, item.level),
-          isActive: Boolean(item.isActive),
-          createdAt: typeof item.createdAt === "string" ? item.createdAt : new Date().toISOString(),
-          updatedAt: typeof item.updatedAt === "string" ? item.updatedAt : new Date().toISOString()
-        }))
-    );
-  } catch {
-    return sortCargoCatalogByName(defaultCargoItems);
-  }
-}
-
-export function saveCargoCatalogItems(items: CargoCatalogItem[]) {
-  if (typeof window === "undefined") {
-    return;
-  }
-
-  window.localStorage.setItem(
-    STORAGE_KEY,
-    JSON.stringify(sortCargoCatalogByName(items))
-  );
-}
-
-export function getCargoCatalogItemById(id: string): CargoCatalogItem | undefined {
-  return loadCargoCatalogItems().find((item) => item.id === id);
-}
-
-export function listActiveCargoNames(): string[] {
-  return listActiveCargoItems().map((item) => item.name);
-}
-
-export function listActiveCargoItems(): CargoCatalogItem[] {
-  return loadCargoCatalogItems().filter((item) => item.isActive);
-}
-
-export function listCargoLevelsByName(cargoName: string): string[] {
-  const normalizedName = cargoName.trim().toLowerCase();
-  if (!normalizedName) {
-    return [...DEFAULT_CARGO_SENIORITY_LEVELS];
-  }
-
-  const item = loadCargoCatalogItems().find(
-    (cargo) => cargo.name.trim().toLowerCase() === normalizedName
-  );
-
-  if (!item || !item.isActive) {
-    return [...DEFAULT_CARGO_SENIORITY_LEVELS];
-  }
-
-  return normalizeCargoSeniorityLevels(item.levels, item.level);
 }
 
 export function listCargoDepartmentOptions(): string[] {
@@ -154,26 +38,22 @@ export function listCargoDepartmentOptions(): string[] {
 
 export function normalizeCargoLevel(level: string): string {
   const normalized = level.trim().toUpperCase();
-  if (
-    normalized === "OPERACIONAL" ||
-    normalized === "TECNICO" ||
-    normalized === "ADMINISTRATIVO" ||
-    normalized === "LIDERANCA" ||
-    normalized === "GESTAO" ||
-    normalized === "ESTRATEGICO"
-  ) {
+  if (CARGO_PRIMARY_LEVELS.includes(normalized as (typeof CARGO_PRIMARY_LEVELS)[number])) {
     return normalized;
   }
   if (normalized === "AUXILIAR" || normalized === "AUX" || normalized === "ASSISTENTE") {
     return "OPERACIONAL";
   }
-  if (normalized === "ANALISTA" || normalized === "TECNICA" || normalized === "TECNICO") {
+  if (normalized === "ANALISTA" || normalized === "TECNICA") {
     return "TECNICO";
   }
-  if (normalized === "SUPERVISOR" || normalized === "COORDENADOR") {
-    return "LIDERANCA";
-  }
-  if (normalized === "SUPERVISAO" || normalized === "COORDENACAO" || normalized === "TATICO") {
+  if (
+    normalized === "SUPERVISOR" ||
+    normalized === "COORDENADOR" ||
+    normalized === "SUPERVISAO" ||
+    normalized === "COORDENACAO" ||
+    normalized === "TATICO"
+  ) {
     return "LIDERANCA";
   }
   if (normalized === "GERENCIA" || normalized === "GERENCIAL" || normalized === "GERENTE") {
@@ -188,19 +68,19 @@ export function normalizeCargoLevel(level: string): string {
 export function resolveCargoLevelLabel(level: string): string {
   const normalized = normalizeCargoLevel(level);
   if (normalized === "TECNICO") {
-    return "T\u00e9cnico";
+    return "Tecnico";
   }
   if (normalized === "ADMINISTRATIVO") {
     return "Administrativo";
   }
   if (normalized === "LIDERANCA") {
-    return "Lideran\u00e7a";
+    return "Lideranca";
   }
   if (normalized === "GESTAO") {
-    return "Gest\u00e3o";
+    return "Gestao";
   }
   if (normalized === "ESTRATEGICO") {
-    return "Estrat\u00e9gico";
+    return "Estrategico";
   }
   return "Operacional";
 }
@@ -227,8 +107,8 @@ export function normalizeCargoSeniorityLevels(
     return deduped.slice(0, 10);
   }
 
-  const legacy = normalizeCargoLevel(fallbackLegacyLevel ?? "");
-  if (legacy === "LIDERANCA" || legacy === "GESTAO" || legacy === "ESTRATEGICO") {
+  const legacyLevel = normalizeCargoLevel(fallbackLegacyLevel ?? "");
+  if (CARGO_LEADERSHIP_LEVELS.includes(legacyLevel as (typeof CARGO_LEADERSHIP_LEVELS)[number])) {
     return ["Senior"];
   }
 
@@ -260,7 +140,7 @@ function normalizeCargoSeniorityLevel(level: string): string {
   return words.join(" ");
 }
 
-function normalizeCargoDepartment(department: string): string {
+export function normalizeCargoDepartment(department: string): string {
   const normalized = department.trim().toUpperCase();
   if (normalized === "ADMINISTRATIVO") {
     return "Administrativo";
@@ -280,12 +160,11 @@ function normalizeCargoDepartment(department: string): string {
   }
   if (
     normalized === "OPERACOES" ||
-    normalized === "OPERA\u00c7\u00d5ES" ||
     normalized === "OPERACAO" ||
     normalized === "OPERACIONAL" ||
     normalized === "CENTRAL OPERACIONAL"
   ) {
-    return "Opera\u00e7\u00f5es";
+    return "Operacoes";
   }
-  return DEFAULT_CARGO_DEPARTMENT;
+  return department.trim();
 }

@@ -1,7 +1,8 @@
-"use client";
+﻿"use client";
 
 import { useEffect, useMemo, useState } from "react";
 import {
+  CompanySettingsOption,
   DriverContract,
   DriverContractProfile,
   DriverEmploymentContract,
@@ -13,7 +14,6 @@ import { loadDocumentTemplates } from "../lib/document-templates";
 import { DriverProfileEditorModal } from "./driver-profile-editor-modal";
 import { DriverEditorSection } from "./driver-profile-editor-shell";
 
-type CompensationMode = "PERCENT" | "FLAT" | "DAILY" | "SHIFT" | "SALARY" | "INTERMITTENT" | "CUSTOM";
 type JourneyScaleType = "FIVE_TWO" | "SIX_ONE" | "TWELVE_THIRTY_SIX" | "CUSTOM";
 type WeekDay = "MON" | "TUE" | "WED" | "THU" | "FRI" | "SAT" | "SUN";
 type FixedScheduleMode = "UNIFORM" | "PER_DAY";
@@ -32,11 +32,9 @@ type OvertimePolicyMode = "PAID" | "BANK_HOURS";
 
 type DriverProfileEditorOperationSectionProps = {
   activeSection: DriverEditorSection;
-  driverType: "AGREGADO" | "FROTA";
   contractProfile: DriverContractProfile;
   journey?: DriverJourney;
   contract?: DriverContract;
-  onOpenContractsSection?: () => void;
   isGeneratingContract?: boolean;
   isRequestingSignature?: boolean;
   isActivatingContract?: boolean;
@@ -55,23 +53,9 @@ type DriverProfileEditorOperationSectionProps = {
   onJourneyChange: (value?: DriverJourney) => void;
   onContractChange: (value?: DriverContract) => void;
   effectiveCompensationLabel: string;
-  customModel: CompensationMode;
-  customValue: string;
-  customNotes: string;
-  onCustomModelChange: (value: CompensationMode) => void;
-  onCustomValueChange: (value: string) => void;
-  onCustomNotesChange: (value: string) => void;
+  companyContractProfiles?: CompanySettingsOption[];
+  companyBenefitOptions?: CompanySettingsOption[];
 };
-
-const benefitOptions = [
-  "Plano de saude",
-  "Plano odontologico",
-  "Vale transporte",
-  "Vale refeicao",
-  "Vale alimentacao",
-  "Seguro de vida",
-  "Bonus por produtividade"
-] as const;
 
 const journeyScaleOptions: Array<{ value: JourneyScaleType; label: string }> = [
   { value: "FIVE_TWO", label: "5x2" },
@@ -346,15 +330,23 @@ const emptyContract: DriverContract = {
   overtimeRoundingMinutes: 15
 };
 
-function deriveContractProfile(driverType: "AGREGADO" | "FROTA", customModel: CompensationMode): DriverContractProfile {
-  if (customModel === "INTERMITTENT") return "INTERMITENTE";
-  return driverType === "FROTA" ? "CLT" : "MEI";
-}
-
-function profileCopy(profile: DriverContractProfile) {
-  if (profile === "CLT") return { title: "CLT", description: "Vinculo formal e operacao de frota." };
-  if (profile === "INTERMITENTE") return { title: "Intermitente", description: "Vinculo sob convocacao." };
-  return { title: "MEI", description: "Prestador/agregado com pagamento flexivel." };
+function profileCopy(profile: DriverContractProfile, customLabel?: string) {
+  if (profile === "CLT") {
+    return {
+      title: customLabel?.trim() || "CLT",
+      description: "Vinculo formal e operacao de frota."
+    };
+  }
+  if (profile === "INTERMITENTE") {
+    return {
+      title: customLabel?.trim() || "Intermitente",
+      description: "Vinculo sob convocacao."
+    };
+  }
+  return {
+    title: customLabel?.trim() || "MEI",
+    description: "Prestador/agregado com pagamento flexivel."
+  };
 }
 
 function resolveJourneyScaleType(journey?: DriverJourney): JourneyScaleType {
@@ -758,50 +750,6 @@ function normalizeOvertimePolicyForClt(contract: DriverContract): DriverContract
   };
 }
 
-function toCompensationFromSalary(
-  profile: DriverContractProfile,
-  contract: DriverContract
-): { model: CompensationMode; value: string; notes: string } {
-  if (profile === "INTERMITENTE") {
-    if (contract.intermittentPaymentMode === "DAILY") {
-      return { model: "INTERMITTENT", value: String(contract.intermittentDailyRate ?? 0), notes: contract.notes?.trim() ?? "" };
-    }
-    if (contract.intermittentPaymentMode === "PER_RIDE") {
-      if (contract.intermittentRideCompensationType === "PERCENT") {
-        return { model: "PERCENT", value: String(contract.intermittentRidePercent ?? 0), notes: contract.notes?.trim() ?? "" };
-      }
-      return { model: "FLAT", value: String(contract.intermittentRideAmount ?? 0), notes: contract.notes?.trim() ?? "" };
-    }
-    if (contract.intermittentPaymentMode === "DAILY_PLUS_RIDE") {
-      return { model: "INTERMITTENT", value: String(contract.intermittentDailyRate ?? 0), notes: contract.notes?.trim() ?? "" };
-    }
-    return { model: "INTERMITTENT", value: "0", notes: contract.notes?.trim() ?? "" };
-  }
-  if (profile === "MEI") {
-    if (contract.meiRemunerationModel === "COMMISSION_PERCENT") {
-      return { model: "PERCENT", value: String(contract.meiCommissionPercent ?? 0), notes: contract.fiscalNotes?.trim() ?? "" };
-    }
-    if (contract.meiRemunerationModel === "PER_RIDE_FIXED") {
-      return { model: "FLAT", value: String(contract.meiPerRideAmount ?? 0), notes: contract.fiscalNotes?.trim() ?? "" };
-    }
-    if (contract.meiRemunerationModel === "RIDE_REVENUE_SHARE") {
-      return { model: "PERCENT", value: String(contract.meiRevenueSharePercent ?? 0), notes: contract.fiscalNotes?.trim() ?? "" };
-    }
-    if (contract.meiRemunerationModel === "FIXED_PLUS_VARIABLE") {
-      return { model: "CUSTOM", value: String(contract.meiFixedBaseAmount ?? 0), notes: contract.fiscalNotes?.trim() ?? "" };
-    }
-    return { model: "CUSTOM", value: "0", notes: contract.fiscalNotes?.trim() ?? "" };
-  }
-
-  const salaryModel = contract.salaryModel ?? "FIXED";
-  const commissionType = contract.commissionType ?? "PERCENT";
-  if (salaryModel === "COMMISSION") {
-    if (commissionType === "PERCENT") return { model: "PERCENT", value: String(contract.commissionPercent ?? 0), notes: contract.notes?.trim() ?? "" };
-    return { model: "FLAT", value: String(contract.commissionPerRide ?? 0), notes: contract.notes?.trim() ?? "" };
-  }
-  return { model: "SALARY", value: String(contract.fixedSalary ?? 0), notes: contract.notes?.trim() ?? "" };
-}
-
 function hasPositiveNumber(value?: number): boolean {
   return typeof value === "number" && Number.isFinite(value) && value > 0;
 }
@@ -946,10 +894,11 @@ function hasConfiguredEmploymentSettings(contract?: DriverContract): boolean {
 
 function mapWorkProfileContractTypeToDriverProfile(
   value?: WorkProfile["contractType"]
-): DriverContractProfile {
+): DriverContractProfile | undefined {
   if (value === "CLT_INTERMITENTE") return "INTERMITENTE";
   if (value === "CLT") return "CLT";
-  return "MEI";
+  if (value === "MEI") return "MEI";
+  return undefined;
 }
 
 function resolveEmploymentContractStatusLabel(status?: DriverEmploymentContract["status"]): string {
@@ -967,6 +916,23 @@ function resolveSignatureStatusLabel(contract?: DriverEmploymentContract): strin
   if (contract.signedAt) return "Assinado";
   if (contract.status === "PENDING_SIGNATURE") return "Enviado para assinatura";
   return "Nao assinado";
+}
+
+function resolveEmploymentContractStatusTone(status?: DriverEmploymentContract["status"]): string {
+  if (status === "ACTIVE" || status === "EXPIRING_SOON") return "signed";
+  if (status === "PENDING_SIGNATURE") return "sent";
+  if (status === "DRAFT") return "generated";
+  if (status === "EXPIRED" || status === "TERMINATED") return "cancelled";
+  return "none";
+}
+
+function resolveEmploymentContractProfileLabel(profile: DriverEmploymentContract["profile"]): string {
+  if (profile === "INTERMITENTE") return "CLT Intermitente";
+  return profile;
+}
+
+function resolveEmploymentContractKindLabel(kind: DriverEmploymentContract["kind"]): string {
+  return kind === "RENEWAL" ? "Renovacao" : "Contrato inicial";
 }
 
 function escapeHtml(value: string): string {
@@ -1079,160 +1045,11 @@ function buildContractWindowSummary(contract: DriverContract): string {
   return `${start} ate ${end} | ${experience}`;
 }
 
-function validateContractDraft(profile: DriverContractProfile, contract: DriverContract): ContractValidationResult {
-  if (profile === "CLT") {
-    const cltSalaryModel = resolveCltSalaryModel(contract);
-
-    if (!contract.experienceEnabled || !contract.experienceStartDate?.trim() || !contract.experienceEndDate?.trim()) {
-      return {
-        field: "clt_experience_period",
-        message: "Para CLT, o periodo de experiencia e obrigatorio. Defina inicio e fim da experiencia."
-      };
-    }
-    if (!hasPositiveNumber(contract.fixedSalary)) {
-      return { field: "clt_fixed_salary", message: "Informe o valor fixo mensal para CLT." };
-    }
-
-    if (cltSalaryModel === "FIXED_PLUS_COMMISSION") {
-      if ((contract.commissionType ?? "PERCENT") === "PERCENT" && !hasPositiveNumber(contract.commissionPercent)) {
-        return { field: "clt_commission_percent", message: "Informe o percentual de comissao do CLT." };
-      }
-      if ((contract.commissionType ?? "PERCENT") === "PER_RIDE" && !hasPositiveNumber(contract.commissionPerRide)) {
-        return { field: "clt_commission_per_ride", message: "Informe o valor de comissao por corrida do CLT." };
-      }
-    }
-
-    if ((contract.overtimeUseGlobalPolicy ?? false) === false && contract.overtimeEnabled !== false) {
-      if (!contract.overtimePolicyMode) {
-        return { field: "overtime_policy_mode", message: "Defina o destino da hora extra (pagamento ou banco)." };
-      }
-      if (!hasPositiveNumber(contract.overtimeAfterDailyHours)) {
-        return { field: "overtime_after_daily", message: "Informe o gatilho diario de hora extra." };
-      }
-      if (!hasPositiveNumber(contract.overtimeMultiplier50)) {
-        return { field: "overtime_multiplier_50", message: "Informe o multiplicador de HE 50%." };
-      }
-      if (!hasPositiveNumber(contract.overtimeMultiplier100)) {
-        return { field: "overtime_multiplier_100", message: "Informe o multiplicador de HE 100%." };
-      }
-      if (!hasPositiveNumber(contract.overtimeRoundingMinutes)) {
-        return { field: "overtime_rounding_minutes", message: "Informe o arredondamento de hora extra em minutos." };
-      }
-    }
-
-    return null;
-  }
-
-  if (profile === "INTERMITENTE") {
-    if (!contract.intermittentPaymentMode) {
-      return {
-        field: "intermittent_payment_mode",
-        message: "Defina a forma de pagamento principal do Intermitente."
-      };
-    }
-    if (!contract.intermittentConvocationMode) {
-      return { field: "intermittent_convocation_mode", message: "Defina o modelo de convocacao do Intermitente." };
-    }
-    if (contract.intermittentConvocationMode === "ADVANCE_NOTICE" && contract.intermittentNoticeHours === undefined) {
-      return {
-        field: "intermittent_notice_hours",
-        message: "Informe o aviso minimo (horas) para convocacao com antecedencia."
-      };
-    }
-    if (
-      (contract.intermittentPaymentMode === "DAILY" || contract.intermittentPaymentMode === "DAILY_PLUS_RIDE") &&
-      !hasPositiveNumber(contract.intermittentDailyRate)
-    ) {
-      return { field: "intermittent_daily_rate", message: "Informe o valor da diaria do Intermitente." };
-    }
-    if (contract.intermittentPaymentMode === "PER_RIDE" || contract.intermittentPaymentMode === "DAILY_PLUS_RIDE") {
-      if (contract.intermittentRideCompensationType === "PERCENT" && !hasPositiveNumber(contract.intermittentRidePercent)) {
-        return {
-          field: "intermittent_ride_percent",
-          message: "Informe o percentual por corrida do Intermitente."
-        };
-      }
-      if (
-        (contract.intermittentRideCompensationType ?? "AMOUNT") === "AMOUNT" &&
-        !hasPositiveNumber(contract.intermittentRideAmount)
-      ) {
-        return { field: "intermittent_ride_amount", message: "Informe o valor por corrida do Intermitente." };
-      }
-    }
-    return null;
-  }
-
-  if (profile === "MEI") {
-    if (!contract.meiRemunerationModel) {
-      return { field: "mei_remuneration_model", message: "Defina o modelo de remuneracao do MEI." };
-    }
-    if (!contract.paymentMethod) {
-      return { field: "mei_payment_method", message: "Defina a forma de pagamento do MEI." };
-    }
-    if (!contract.paymentFrequency) {
-      return { field: "mei_payment_frequency", message: "Defina a frequencia de pagamento do MEI." };
-    }
-    if (!contract.meiWorkMode) {
-      return { field: "mei_work_mode", message: "Defina a forma de atuacao do MEI." };
-    }
-    if (normalizeCnpjDigits(contract.meiCnpj).length !== 14) {
-      return { field: "mei_cnpj", message: "Informe um CNPJ valido do prestador MEI." };
-    }
-    if (!contract.meiLegalName?.trim()) {
-      return { field: "mei_legal_name", message: "Informe a razao social do prestador MEI." };
-    }
-    if (!contract.meiOperationVehicleMode) {
-      return { field: "mei_operation_vehicle_mode", message: "Defina a forma de operacao do MEI." };
-    }
-    if (!contract.meiFuelResponsibility) {
-      return { field: "mei_fuel_responsibility", message: "Defina a responsabilidade do combustivel no MEI." };
-    }
-    if (!contract.meiMaintenanceResponsibility) {
-      return { field: "mei_maintenance_responsibility", message: "Defina a responsabilidade da manutencao no MEI." };
-    }
-    if (contract.meiRemunerationModel === "COMMISSION_PERCENT") {
-      if (!hasPositiveNumber(contract.meiCommissionPercent)) {
-        return { field: "mei_commission_percent", message: "Informe o percentual de comissao do MEI." };
-      }
-      if (!contract.meiCommissionBase) {
-        return { field: "mei_commission_base", message: "Defina a base da comissao do MEI." };
-      }
-    }
-    if (contract.meiRemunerationModel === "PER_RIDE_FIXED" && !hasPositiveNumber(contract.meiPerRideAmount)) {
-      return { field: "mei_per_ride_amount", message: "Informe o valor por corrida do MEI." };
-    }
-    if (contract.meiRemunerationModel === "RIDE_REVENUE_SHARE") {
-      if (!hasPositiveNumber(contract.meiRevenueSharePercent)) {
-        return { field: "mei_revenue_share_percent", message: "Informe o percentual de repasse do MEI." };
-      }
-      if (!contract.meiRevenueShareBase) {
-        return { field: "mei_revenue_share_base", message: "Defina a base do repasse do MEI." };
-      }
-    }
-    if (contract.meiRemunerationModel === "FIXED_PLUS_VARIABLE") {
-      if (!hasPositiveNumber(contract.meiFixedBaseAmount)) {
-        return { field: "mei_fixed_base_amount", message: "Informe o valor base do MEI." };
-      }
-      if ((contract.meiVariableType ?? "PERCENT") === "PERCENT" && !hasPositiveNumber(contract.meiVariablePercent)) {
-        return { field: "mei_variable_percent", message: "Informe o percentual variavel do MEI." };
-      }
-      if ((contract.meiVariableType ?? "PERCENT") === "AMOUNT" && !hasPositiveNumber(contract.meiVariableAmount)) {
-        return { field: "mei_variable_amount", message: "Informe o valor variavel do MEI." };
-      }
-    }
-    return null;
-  }
-
-  return null;
-}
-
 export function DriverProfileEditorOperationSection({
   activeSection,
-  driverType,
   contractProfile,
   journey,
   contract,
-  onOpenContractsSection,
   isGeneratingContract = false,
   isRequestingSignature = false,
   isActivatingContract = false,
@@ -1246,12 +1063,8 @@ export function DriverProfileEditorOperationSection({
   onJourneyChange,
   onContractChange,
   effectiveCompensationLabel,
-  customModel,
-  customValue,
-  customNotes,
-  onCustomModelChange,
-  onCustomValueChange,
-  onCustomNotesChange
+  companyContractProfiles,
+  companyBenefitOptions
 }: DriverProfileEditorOperationSectionProps) {
   const [isContractModalOpen, setIsContractModalOpen] = useState(false);
   const [isContractModalReadOnly, setIsContractModalReadOnly] = useState(false);
@@ -1262,12 +1075,27 @@ export function DriverProfileEditorOperationSection({
   const [draftContract, setDraftContract] = useState<DriverContract>(
     normalizeIntermittentContractDraft(contract ?? emptyContract)
   );
+  const [isContractHistoryModalOpen, setIsContractHistoryModalOpen] = useState(false);
   const [selectedContractPreview, setSelectedContractPreview] = useState<DriverEmploymentContract | null>(null);
   const [selectedContractPrintHtml, setSelectedContractPrintHtml] = useState("");
   const [isBuildingContractPreview, setIsBuildingContractPreview] = useState(false);
 
-  const selectedProfile = contractProfile || deriveContractProfile(driverType, customModel);
-  const profile = profileCopy(selectedProfile);
+  const selectedProfile = contractProfile;
+  const contractProfileLabelMap = useMemo(() => {
+    const map = new Map<DriverContractProfile, string>();
+    (companyContractProfiles ?? []).forEach((item) => {
+      const value = item.value.trim();
+      if (value === "CLT") {
+        map.set("CLT", item.label);
+      } else if (value === "CLT_INTERMITENTE") {
+        map.set("INTERMITENTE", item.label);
+      } else if (value === "MEI") {
+        map.set("MEI", item.label);
+      }
+    });
+    return map;
+  }, [companyContractProfiles]);
+  const profile = profileCopy(selectedProfile, contractProfileLabelMap.get(selectedProfile));
   const currentContract = contract ?? emptyContract;
   const currentJourney = normalizeJourneyDraft(journey);
   const draftProfile = (draftContract as DriverContract & { profile?: DriverContractProfile }).profile;
@@ -1285,6 +1113,11 @@ export function DriverProfileEditorOperationSection({
     draftContract.experienceNotifyLeadDays ??
     getExperienceLeadDays(defaultCltExperiencePresetDays);
   const employmentContracts = currentContract.employmentContracts ?? [];
+  const contractsHistory = useMemo(
+    () => [...employmentContracts].sort((a, b) => +new Date(b.generatedAt) - +new Date(a.generatedAt)),
+    [employmentContracts]
+  );
+  const hasContractsHistory = contractsHistory.length > 0;
   const openEmploymentContract = employmentContracts.find(
     (item) =>
       item.status === "DRAFT" ||
@@ -1627,7 +1460,13 @@ function buildCltExperienceContract(
     if (validationError) return;
 
     const normalizedContract: DriverContract = {
-      ...draftContract,
+      workProfileTemplateId: draftContract.workProfileTemplateId?.trim() || undefined,
+      workProfileTemplateName:
+        selectedWorkProfile?.name?.trim() || draftContract.workProfileTemplateName?.trim() || undefined,
+      workProfileSummary:
+        selectedWorkProfile?.summary?.trim() || draftContract.workProfileSummary?.trim() || undefined,
+      workProfileContractType:
+        selectedWorkProfile?.contractType || draftContract.workProfileContractType || undefined,
       employmentTemplateKey:
         selectedWorkProfile?.remuneration.contractTemplateKey?.trim() ||
         draftContract.employmentTemplateKey?.trim() ||
@@ -1640,6 +1479,7 @@ function buildCltExperienceContract(
         selectedWorkProfile?.remuneration.contractTemplateVersion?.trim() ||
         draftContract.employmentTemplateVersion?.trim() ||
         undefined,
+      hasFixedTermContract: Boolean(draftContract.hasFixedTermContract),
       startDate: draftContract.startDate?.trim() || undefined,
       endDate:
         draftContract.hasFixedTermContract && draftContract.endDate?.trim()
@@ -1672,12 +1512,16 @@ function buildCltExperienceContract(
       experienceNotifyRepeatDays:
         draftContract.experienceEnabled && draftContract.notifyExperienceEnd
           ? draftContract.experienceNotifyRepeatDays
+          : undefined,
+      employmentContracts:
+        currentContract.employmentContracts && currentContract.employmentContracts.length > 0
+          ? currentContract.employmentContracts
           : undefined
     };
 
-    const mappedProfile = mapWorkProfileContractTypeToDriverProfile(
-      normalizedContract.workProfileContractType
-    );
+    const mappedProfile =
+      mapWorkProfileContractTypeToDriverProfile(normalizedContract.workProfileContractType) ??
+      selectedProfile;
     onContractProfileChange(mappedProfile);
     onJourneyChange(draftJourney);
     onContractChange(normalizedContract);
@@ -1810,6 +1654,15 @@ function buildCltExperienceContract(
             <button type="button" className="secondary" onClick={() => openContractModal(false)}>
               Criar vinculo
             </button>
+            {hasContractsHistory ? (
+              <button
+                type="button"
+                className="secondary-link"
+                onClick={() => setIsContractHistoryModalOpen(true)}
+              >
+                Ver contratos anteriores
+              </button>
+            ) : null}
           </article>
         ) : !hasOpenContractCycle && hasConfiguredLinkage ? (
           <article className="driver-editor-summary-card">
@@ -1832,6 +1685,15 @@ function buildCltExperienceContract(
               >
                 {isGeneratingContract ? "Gerando..." : "Gerar contrato"}
               </button>
+              {hasContractsHistory ? (
+                <button
+                  type="button"
+                  className="secondary-link"
+                  onClick={() => setIsContractHistoryModalOpen(true)}
+                >
+                  Ver contratos anteriores
+                </button>
+              ) : null}
             </div>
           </article>
         ) : (
@@ -1903,15 +1765,16 @@ function buildCltExperienceContract(
                     Cancelar contrato
                   </button>
                 </>
-              ) : (
+              ) : null}
+              {hasContractsHistory ? (
                 <button
                   type="button"
                   className="secondary-link"
-                  onClick={() => onOpenContractsSection?.()}
+                  onClick={() => setIsContractHistoryModalOpen(true)}
                 >
-                  Gerenciar no step 6
+                  Ver contratos anteriores
                 </button>
-              )}
+              ) : null}
             </div>
           </article>
         )}
@@ -1963,7 +1826,7 @@ function buildCltExperienceContract(
           {isContractModalReadOnly ? (
             <div className="driver-editor-modal-field-full driver-editor-contract-inline-note">
               <strong>Modo leitura</strong>
-              <span>Existe contrato em andamento. Para alterar regras, finalize o ciclo atual no step 6.</span>
+              <span>Existe contrato em andamento. Para alterar regras, finalize o ciclo atual para liberar edicao.</span>
             </div>
           ) : null}
           <fieldset
@@ -1997,9 +1860,9 @@ function buildCltExperienceContract(
                       return;
                     }
 
-                    const mappedProfile = mapWorkProfileContractTypeToDriverProfile(
-                      selected.contractType
-                    );
+                    const mappedProfile =
+                      mapWorkProfileContractTypeToDriverProfile(selected.contractType) ??
+                      selectedProfile;
                     onContractProfileChange(mappedProfile);
                     setDraftContract((current) => {
                       const profileTemplateKey = selected.remuneration.contractTemplateKey?.trim();
@@ -2067,6 +1930,13 @@ function buildCltExperienceContract(
                 <span>Selecione um perfil para carregar uma base coerente de jornada, remuneracao e politicas.</span>
               </div>
             )}
+
+            {(companyBenefitOptions?.length ?? 0) > 0 ? (
+              <div className="driver-editor-contract-inline-note">
+                <strong>Beneficios configurados para a empresa</strong>
+                <span>{companyBenefitOptions?.map((item) => item.label).join(", ")}</span>
+              </div>
+            ) : null}
           </section>
 
           <section className="driver-editor-contract-card driver-editor-contract-card-term driver-editor-modal-field-full">
@@ -2243,1647 +2113,60 @@ function buildCltExperienceContract(
             </div>
           </section>
 
-          {false ? (
-            <>
-          <section className="driver-editor-contract-card driver-editor-modal-field-full">
-            <div className="driver-editor-contract-card-head">
-              <strong>Tipo de vinculo</strong>
-              <small>Selecione primeiro o perfil para liberar as configuracoes especificas.</small>
-            </div>
-            <div className="driver-editor-profile-picker" role="radiogroup" aria-label="Tipo de vinculo">
-              {(["CLT", "INTERMITENTE", "MEI"] as const).map((option) => {
-                const optionCopy = profileCopy(option);
-                const isActive = draftProfile === option;
-                return (
-                  <button
-                    key={option}
-                    type="button"
-                    role="radio"
-                    aria-checked={isActive}
-                    className={`driver-editor-profile-option ${isActive ? "is-active" : ""}`}
-                    onClick={() => {
-                      setDraftContract((current) => {
-                        if (option === "CLT") {
-                          return {
-                            ...buildCltExperienceContract(
-                              { ...current, profile: option } as DriverContract,
-                              resolveCltPresetFromDates(current.experienceStartDate, current.experienceEndDate) ??
-                                defaultCltExperiencePresetDays
-                            ),
-                            profile: option
-                          } as DriverContract;
-                        }
-                        return ({ ...current, profile: option }) as DriverContract;
-                      });
-                      if (option === "INTERMITENTE") {
-                        setDraftJourney((current) => normalizeIntermittentJourneyDraft(current));
-                      }
-                      if (option === "CLT") {
-                        setIsManualCltExperienceDates(false);
-                      }
-                    }}
-                  >
-                    <div className="driver-editor-profile-option-copy">
-                      <strong>{optionCopy.title}</strong>
-                      <small>{optionCopy.description}</small>
-                    </div>
-                  </button>
-                );
-              })}
-            </div>
-            {!draftProfile ? (
-              <div className="driver-editor-contract-inline-note">
-                <strong>Selecione um tipo de vinculo</strong>
-                <span>Depois da selecao, os blocos de vigencia, remuneracao e jornada serao exibidos.</span>
-              </div>
-            ) : null}
-          </section>
-          {draftProfile ? (
-            <>
-          {draftProfile === "MEI" ? (
-            <section className="driver-editor-contract-card driver-editor-modal-field-full">
-              <div className="driver-editor-contract-card-head">
-                <strong>Dados fiscais do prestador</strong>
-                <small>Identificacao juridica para contrato e faturamento do MEI.</small>
-              </div>
-              <div className="form-grid">
-                <label className={fieldClassName("mei_cnpj")}>CNPJ do MEI
-                  <input
-                    type="text"
-                    inputMode="numeric"
-                    placeholder="00.000.000/0000-00"
-                    value={formatCnpjInput(draftContract.meiCnpj)}
-                    onChange={(event) =>
-                      setDraftContract((current) => ({
-                        ...current,
-                        meiCnpj: formatCnpjInput(event.target.value)
-                      }))
-                    }
-                  />
-                </label>
-                <label className={fieldClassName("mei_legal_name")}>Razao social
-                  <input
-                    type="text"
-                    placeholder="Nome empresarial do MEI"
-                    value={draftContract.meiLegalName ?? ""}
-                    onChange={(event) =>
-                      setDraftContract((current) => ({
-                        ...current,
-                        meiLegalName: event.target.value
-                      }))
-                    }
-                  />
-                </label>
-                <label>Nome fantasia (opcional)
-                  <input
-                    type="text"
-                    placeholder="Nome comercial"
-                    value={draftContract.meiTradeName ?? ""}
-                    onChange={(event) =>
-                      setDraftContract((current) => ({
-                        ...current,
-                        meiTradeName: event.target.value
-                      }))
-                    }
-                  />
-                </label>
-                <label>Inscricao municipal (opcional)
-                  <input
-                    type="text"
-                    placeholder="Numero da inscricao"
-                    value={draftContract.meiMunicipalRegistration ?? ""}
-                    onChange={(event) =>
-                      setDraftContract((current) => ({
-                        ...current,
-                        meiMunicipalRegistration: event.target.value
-                      }))
-                    }
-                  />
-                </label>
-              </div>
-            </section>
-          ) : null}
-          <section className="driver-editor-contract-card driver-editor-contract-card-term driver-editor-modal-field-full">
-            <div className="driver-editor-contract-card-head"><strong>Vigencia</strong><small>Controle prazo do contrato e alertas de vencimento.</small></div>
-            <div className="form-grid">
-              <label>Contrato com prazo definido?
-                <select className="select" value={draftContract.hasFixedTermContract ? "YES" : "NO"} onChange={(event) => setDraftContract((current) => ({ ...current, hasFixedTermContract: event.target.value === "YES" }))}>
-                  <option value="YES">Sim</option><option value="NO">Nao</option>
-                </select>
-              </label>
-              <label>Data de inicio
-                <input
-                  type="date"
-                  value={draftContract.startDate ?? ""}
-                  onChange={(event) =>
-                    setDraftContract((current) => {
-                      const nextStartDate = event.target.value;
-                      if (isCltDraft && !isManualCltExperienceDates) {
-                        return {
-                          ...buildCltExperienceContract(
-                            { ...current, startDate: nextStartDate },
-                            resolveCltPresetFromDates(current.experienceStartDate, current.experienceEndDate) ??
-                              defaultCltExperiencePresetDays,
-                            nextStartDate
-                          ),
-                          startDate: nextStartDate
-                        };
-                      }
-
-                      return {
-                        ...current,
-                        startDate: nextStartDate,
-                        experienceStartDate:
-                          current.experienceEnabled && !current.experienceStartDate
-                            ? nextStartDate
-                            : current.experienceStartDate
-                      };
-                    })
-                  }
-                />
-              </label>
-              {draftContract.hasFixedTermContract ? (
-                <>
-                  <label>Data de termino
-                    <input type="date" value={draftContract.endDate ?? ""} onChange={(event) => setDraftContract((current) => ({ ...current, endDate: event.target.value }))} />
-                  </label>
-                  <label>Ativar alerta de vencimento?
-                    <select className="select" value={draftContract.notifyContractEnd ? "YES" : "NO"} onChange={(event) => setDraftContract((current) => ({ ...current, notifyContractEnd: event.target.value === "YES" }))}>
-                      <option value="YES">Sim</option><option value="NO">Nao</option>
-                    </select>
-                  </label>
-                  {draftContract.notifyContractEnd ? (
-                    <label>Avisar com antecedencia (dias)
-                      <input type="number" min="0" step="1" value={draftContract.contractEndNotifyLeadDays ?? ""} onChange={(event) => setDraftContract((current) => ({ ...current, contractEndNotifyLeadDays: parseIntMin(event.target.value, 0) }))} />
-                    </label>
-                  ) : null}
-                </>
-              ) : null}
-            </div>
-          </section>
-
-          <section className={`driver-editor-contract-card driver-editor-contract-card-experience driver-editor-modal-field-full ${highlightExperience ? "is-highlighted" : ""}`}>
-            <div className="driver-editor-contract-card-head"><strong>Periodo de experiencia</strong><small>Bloco principal para CLT e opcional nos demais.</small></div>
-            <div className="form-grid">
-              {isCltDraft ? (
-                <>
-                  <div className="driver-editor-modal-field-full driver-editor-contract-inline-note">
-                    <strong>Obrigatorio para CLT</strong>
-                    <span>Selecione 30, 60 ou 90 dias. O alerta sera automatico em 1/3 do periodo e depois semanal.</span>
-                  </div>
-                  <label className={fieldClassName("clt_experience_period")}>Duracao da experiencia
-                    <select
-                      className="select"
-                      value={String(cltExperiencePreset ?? defaultCltExperiencePresetDays)}
-                      onChange={(event) => applyCltExperiencePreset(Number(event.target.value) as CltExperiencePresetDays)}
-                    >
-                      {cltExperiencePresetOptions.map((option) => (
-                        <option key={option} value={option}>
-                          {option} dias
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                  <div className="driver-editor-modal-field-full driver-editor-contract-inline-note">
-                    <strong>{`Inicio ${formatDatePtBr(draftContract.experienceStartDate)} | Fim ${formatDatePtBr(draftContract.experienceEndDate)}`}</strong>
-                    <span>{`Alerta automatico: ${cltExperienceLeadDays ?? 0} dia(s) antes do fim, repetindo a cada 7 dias.`}</span>
-                    <button
-                      type="button"
-                      className="secondary"
-                      onClick={() => setIsManualCltExperienceDates((current) => !current)}
-                    >
-                      {isManualCltExperienceDates ? "Fechar edicao manual" : "Alterar datas manualmente"}
-                    </button>
-                  </div>
-
-                  {isManualCltExperienceDates ? (
-                    <>
-                      <label className={fieldClassName("clt_experience_period")}>Inicio da experiencia
-                        <input
-                          type="date"
-                          value={draftContract.experienceStartDate ?? ""}
-                          onChange={(event) =>
-                            setDraftContract((current) => {
-                              const nextStartDate = event.target.value;
-                              const durationDays = getExperienceDurationDays(nextStartDate, current.experienceEndDate);
-                              return {
-                                ...current,
-                                experienceEnabled: true,
-                                experienceStartDate: nextStartDate,
-                                notifyExperienceEnd: true,
-                                experienceNotifyLeadDays:
-                                  getExperienceLeadDays(durationDays) ??
-                                  current.experienceNotifyLeadDays ??
-                                  getExperienceLeadDays(defaultCltExperiencePresetDays),
-                                experienceNotifyRepeatDays: 7
-                              };
-                            })
-                          }
-                        />
-                      </label>
-                      <label className={fieldClassName("clt_experience_period")}>Fim da experiencia
-                        <input
-                          type="date"
-                          value={draftContract.experienceEndDate ?? ""}
-                          onChange={(event) =>
-                            setDraftContract((current) => {
-                              const nextEndDate = event.target.value;
-                              const durationDays = getExperienceDurationDays(current.experienceStartDate, nextEndDate);
-                              return {
-                                ...current,
-                                experienceEnabled: true,
-                                experienceEndDate: nextEndDate,
-                                notifyExperienceEnd: true,
-                                experienceNotifyLeadDays:
-                                  getExperienceLeadDays(durationDays) ??
-                                  current.experienceNotifyLeadDays ??
-                                  getExperienceLeadDays(defaultCltExperiencePresetDays),
-                                experienceNotifyRepeatDays: 7
-                              };
-                            })
-                          }
-                        />
-                      </label>
-                      <div className="driver-editor-modal-field-full driver-editor-contract-inline-note">
-                        <strong>Voltar para configuracao rapida</strong>
-                        <span>Use os botoes 30/60/90 dias para recalcular automaticamente as datas.</span>
-                        <button
-                          type="button"
-                          className="secondary"
-                          onClick={() =>
-                            applyCltExperiencePreset(
-                              cltExperiencePreset ?? defaultCltExperiencePresetDays,
-                              draftContract.experienceStartDate ?? draftContract.startDate ?? getTodayIsoDate()
-                            )
-                          }
-                        >
-                          Usar 30/60/90 dias
-                        </button>
-                      </div>
-                    </>
-                  ) : null}
-
-                  <label className="driver-editor-modal-checkbox">
-                    <input
-                      type="checkbox"
-                      checked={Boolean(draftContract.autoRenewAfterExperience)}
-                      onChange={(event) =>
-                        setDraftContract((current) => ({ ...current, autoRenewAfterExperience: event.target.checked }))
-                      }
-                    />
-                    <span>Renovar automaticamente apos a experiencia</span>
-                  </label>
-                </>
-              ) : (
-                <>
-                  <label>Periodo de experiencia ativo?
-                    <select
-                      className="select"
-                      value={draftContract.experienceEnabled ? "YES" : "NO"}
-                      onChange={(event) =>
-                        setDraftContract((current) => {
-                          const enabled = event.target.value === "YES";
-                          return {
-                            ...current,
-                            experienceEnabled: enabled,
-                            experienceStartDate:
-                              enabled && !current.experienceStartDate ? current.startDate ?? "" : current.experienceStartDate
-                          };
-                        })
-                      }
-                    >
-                      <option value="YES">Sim</option><option value="NO">Nao</option>
-                    </select>
-                  </label>
-                  {draftContract.experienceEnabled ? (
-                    <>
-                      <label>Inicio da experiencia
-                        <input type="date" value={draftContract.experienceStartDate ?? ""} onChange={(event) => setDraftContract((current) => ({ ...current, experienceStartDate: event.target.value }))} />
-                      </label>
-                      <label>Fim da experiencia
-                        <input type="date" value={draftContract.experienceEndDate ?? ""} onChange={(event) => setDraftContract((current) => ({ ...current, experienceEndDate: event.target.value }))} />
-                      </label>
-                      <label className="driver-editor-modal-checkbox"><input type="checkbox" checked={Boolean(draftContract.autoRenewAfterExperience)} onChange={(event) => setDraftContract((current) => ({ ...current, autoRenewAfterExperience: event.target.checked }))} /><span>Renovar automaticamente apos a experiencia</span></label>
-                      <label>Notificar finalizacao do periodo?
-                        <select className="select" value={draftContract.notifyExperienceEnd ? "YES" : "NO"} onChange={(event) => setDraftContract((current) => ({ ...current, notifyExperienceEnd: event.target.value === "YES" }))}>
-                          <option value="YES">Sim</option><option value="NO">Nao</option>
-                        </select>
-                      </label>
-                      {draftContract.notifyExperienceEnd ? (
-                        <>
-                          <label>Avisar com antecedencia (dias)
-                            <input type="number" min="0" step="1" value={draftContract.experienceNotifyLeadDays ?? ""} onChange={(event) => setDraftContract((current) => ({ ...current, experienceNotifyLeadDays: parseIntMin(event.target.value, 0) }))} />
-                          </label>
-                          <label>Repetir alerta a cada (dias)
-                            <input type="number" min="1" step="1" value={draftContract.experienceNotifyRepeatDays ?? ""} onChange={(event) => setDraftContract((current) => ({ ...current, experienceNotifyRepeatDays: parseIntMin(event.target.value, 1) }))} />
-                          </label>
-                        </>
-                      ) : null}
-                    </>
-                  ) : null}
-                </>
-              )}
-            </div>
-          </section>
-
-          {draftProfile !== "MEI" ? (
-            <section className="driver-editor-contract-card driver-editor-contract-card-benefits driver-editor-modal-field-full">
-              <div className="driver-editor-contract-card-head">
-                <strong>{draftProfile === "CLT" ? "Beneficios do colaborador" : "Beneficios"}</strong>
-                <small>{draftProfile === "CLT" ? "Beneficios vinculados ao colaborador CLT." : "Aplicavel principalmente para CLT/Intermitente."}</small>
-              </div>
-              <div className="form-grid">
-                <label className="driver-editor-modal-field-full">Beneficios
-                  <div className="driver-editor-benefits-grid">
-                    {benefitOptions.map((benefit) => <label key={benefit} className="driver-editor-benefit-option"><input type="checkbox" checked={(draftContract.benefitsList ?? []).includes(benefit)} onChange={(event) => toggleBenefit(benefit, event.target.checked)} /><span>{benefit}</span></label>)}
-                  </div>
-                </label>
-                <label className="driver-editor-modal-field-full">Outros beneficios
-                  <input value={draftContract.otherBenefits ?? ""} onChange={(event) => setDraftContract((current) => ({ ...current, otherBenefits: event.target.value }))} />
-                </label>
-              </div>
-            </section>
-          ) : null}
-
-          <section className="driver-editor-contract-card driver-editor-contract-card-salary driver-editor-modal-field-full">
-            <div className="driver-editor-contract-card-head">
-              <strong>Remuneracao</strong>
-              <small>
-                {draftProfile === "INTERMITENTE"
-                  ? "Defina a forma principal de pagamento e os valores variaveis."
-                  : draftProfile === "MEI"
-                    ? "Modelo de ganho do parceiro (comissao, repasse ou valor por corrida)."
-                    : "Remuneracao CLT com salario fixo e opcao de comissao adicional."}
-              </small>
-            </div>
-            <div className="form-grid">
-              {draftProfile === "INTERMITENTE" ? (
-                <>
-                  <label className={fieldClassName("intermittent_payment_mode")}>Forma de pagamento principal
-                    <select
-                      className="select"
-                      value={draftContract.intermittentPaymentMode ?? ""}
-                      onChange={(event) =>
-                        setDraftContract((current) => {
-                          const paymentMode = event.target.value as IntermittentPaymentMode;
-                          const legacyPaymentMethod = mapIntermittentModeToLegacyPaymentMethod(paymentMode);
-                          return {
-                            ...current,
-                            intermittentPaymentMode: paymentMode,
-                            paymentMethod: legacyPaymentMethod || current.paymentMethod
-                          };
-                        })
-                      }
-                    >
-                      <option value="">Selecionar forma</option>
-                      <option value="DAILY">Por diaria</option>
-                      <option value="PER_RIDE">Por corrida</option>
-                      <option value="DAILY_PLUS_RIDE">Diaria + corrida</option>
-                    </select>
-                  </label>
-
-                  {(draftContract.intermittentPaymentMode === "DAILY" ||
-                    draftContract.intermittentPaymentMode === "DAILY_PLUS_RIDE") ? (
-                    <label className={fieldClassName("intermittent_daily_rate")}>Valor da diaria
-                      <input
-                        type="text"
-                        inputMode="decimal"
-                        placeholder="0,00"
-                        value={formatCurrencyField(draftContract.intermittentDailyRate)}
-                        onChange={(event) =>
-                          setDraftContract((current) => ({
-                            ...current,
-                            intermittentDailyRate: parseCurrencyMasked(event.target.value)
-                          }))
-                        }
-                      />
-                    </label>
-                  ) : null}
-
-                  {(draftContract.intermittentPaymentMode === "PER_RIDE" ||
-                    draftContract.intermittentPaymentMode === "DAILY_PLUS_RIDE") ? (
-                    <>
-                      <label>Variavel por corrida
-                        <select
-                          className="select"
-                          value={draftContract.intermittentRideCompensationType ?? "AMOUNT"}
-                          onChange={(event) =>
-                            setDraftContract((current) => ({
-                              ...current,
-                              intermittentRideCompensationType: event.target.value as IntermittentRideCompensationType
-                            }))
-                          }
-                        >
-                          <option value="AMOUNT">Valor por corrida (R$)</option>
-                          <option value="PERCENT">Comissao percentual (%)</option>
-                        </select>
-                      </label>
-                      {(draftContract.intermittentRideCompensationType ?? "AMOUNT") === "PERCENT" ? (
-                        <label className={fieldClassName("intermittent_ride_percent")}>Percentual por corrida
-                          <input
-                            type="text"
-                            inputMode="decimal"
-                            placeholder="0"
-                            value={formatPercentField(draftContract.intermittentRidePercent)}
-                            onChange={(event) =>
-                              setDraftContract((current) => ({
-                                ...current,
-                                intermittentRidePercent: parsePercentMasked(event.target.value)
-                              }))
-                            }
-                          />
-                        </label>
-                      ) : (
-                        <label className={fieldClassName("intermittent_ride_amount")}>Valor por corrida
-                          <input
-                            type="text"
-                            inputMode="decimal"
-                            placeholder="0,00"
-                            value={formatCurrencyField(draftContract.intermittentRideAmount)}
-                            onChange={(event) =>
-                              setDraftContract((current) => ({
-                                ...current,
-                                intermittentRideAmount: parseCurrencyMasked(event.target.value)
-                              }))
-                            }
-                          />
-                        </label>
-                      )}
-                    </>
-                  ) : null}
-
-                  <label>Frequencia de pagamento
-                    <select
-                      className="select"
-                      value={draftContract.paymentFrequency ?? ""}
-                      onChange={(event) => setDraftContract((current) => ({ ...current, paymentFrequency: event.target.value }))}
-                    >
-                      <option value="">Selecionar frequencia</option>
-                      <option value="DIARIA">Diaria</option>
-                      <option value="SEMANAL">Semanal</option>
-                      <option value="QUINZENAL">Quinzenal</option>
-                      <option value="MENSAL">Mensal</option>
-                    </select>
-                  </label>
-                </>
-              ) : draftProfile === "MEI" ? (
-                <>
-                  <label className={fieldClassName("mei_remuneration_model")}>Modelo de remuneracao
-                    <select
-                      className="select"
-                      value={draftContract.meiRemunerationModel ?? ""}
-                      onChange={(event) =>
-                        setDraftContract((current) => ({
-                          ...current,
-                          meiRemunerationModel: event.target.value as MeiRemunerationModel
-                        }))
-                      }
-                    >
-                      <option value="">Selecionar modelo</option>
-                      <option value="COMMISSION_PERCENT">Comissao (%)</option>
-                      <option value="PER_RIDE_FIXED">Valor fixo por corrida</option>
-                      <option value="RIDE_REVENUE_SHARE">Repasse por corrida</option>
-                      <option value="FIXED_PLUS_VARIABLE">Fixo + variavel</option>
-                    </select>
-                  </label>
-
-                  {draftContract.meiRemunerationModel === "COMMISSION_PERCENT" ? (
-                    <>
-                      <label className={fieldClassName("mei_commission_percent")}>Percentual (%)
-                        <input
-                          type="text"
-                          inputMode="decimal"
-                          placeholder="0"
-                          value={formatPercentField(draftContract.meiCommissionPercent)}
-                          onChange={(event) =>
-                            setDraftContract((current) => ({ ...current, meiCommissionPercent: parsePercentMasked(event.target.value) }))
-                          }
-                        />
-                      </label>
-                      <label className={fieldClassName("mei_commission_base")}>Base da comissao
-                        <select
-                          className="select"
-                          value={draftContract.meiCommissionBase ?? "RIDE"}
-                          onChange={(event) =>
-                            setDraftContract((current) => ({
-                              ...current,
-                              meiCommissionBase: event.target.value as MeiCommissionBase
-                            }))
-                          }
-                        >
-                          <option value="RIDE">Por corrida</option>
-                          <option value="GROSS_REVENUE">Por faturamento</option>
-                          <option value="RATING">Por avaliacao</option>
-                        </select>
-                      </label>
-                    </>
-                  ) : null}
-
-                  {draftContract.meiRemunerationModel === "PER_RIDE_FIXED" ? (
-                    <label className={fieldClassName("mei_per_ride_amount")}>Valor por corrida (R$)
-                      <input
-                        type="text"
-                        inputMode="decimal"
-                        placeholder="0,00"
-                        value={formatCurrencyField(draftContract.meiPerRideAmount)}
-                        onChange={(event) =>
-                          setDraftContract((current) => ({ ...current, meiPerRideAmount: parseCurrencyMasked(event.target.value) }))
-                        }
-                      />
-                    </label>
-                  ) : null}
-
-                  {draftContract.meiRemunerationModel === "RIDE_REVENUE_SHARE" ? (
-                    <>
-                      <label className={fieldClassName("mei_revenue_share_percent")}>Percentual de repasse (%)
-                        <input
-                          type="text"
-                          inputMode="decimal"
-                          placeholder="0"
-                          value={formatPercentField(draftContract.meiRevenueSharePercent)}
-                          onChange={(event) =>
-                            setDraftContract((current) => ({ ...current, meiRevenueSharePercent: parsePercentMasked(event.target.value) }))
-                          }
-                        />
-                      </label>
-                      <label className={fieldClassName("mei_revenue_share_base")}>Base do repasse
-                        <select
-                          className="select"
-                          value={draftContract.meiRevenueShareBase ?? "RIDE_GROSS"}
-                          onChange={(event) =>
-                            setDraftContract((current) => ({
-                              ...current,
-                              meiRevenueShareBase: event.target.value as MeiRevenueShareBase
-                            }))
-                          }
-                        >
-                          <option value="RIDE_GROSS">Valor da corrida</option>
-                          <option value="RIDE_NET">Valor liquido</option>
-                        </select>
-                      </label>
-                    </>
-                  ) : null}
-
-                  {draftContract.meiRemunerationModel === "FIXED_PLUS_VARIABLE" ? (
-                    <>
-                      <label className={fieldClassName("mei_fixed_base_amount")}>Valor base (R$)
-                        <input
-                          type="text"
-                          inputMode="decimal"
-                          placeholder="0,00"
-                          value={formatCurrencyField(draftContract.meiFixedBaseAmount)}
-                          onChange={(event) =>
-                            setDraftContract((current) => ({ ...current, meiFixedBaseAmount: parseCurrencyMasked(event.target.value) }))
-                          }
-                        />
-                      </label>
-                      <label>Variavel
-                        <select
-                          className="select"
-                          value={draftContract.meiVariableType ?? "PERCENT"}
-                          onChange={(event) =>
-                            setDraftContract((current) => ({
-                              ...current,
-                              meiVariableType: event.target.value as MeiVariableType
-                            }))
-                          }
-                        >
-                          <option value="PERCENT">Percentual (%)</option>
-                          <option value="AMOUNT">Valor fixo (R$)</option>
-                        </select>
-                      </label>
-                      {(draftContract.meiVariableType ?? "PERCENT") === "PERCENT" ? (
-                        <label className={fieldClassName("mei_variable_percent")}>Percentual variavel (%)
-                          <input
-                            type="text"
-                            inputMode="decimal"
-                            placeholder="0"
-                            value={formatPercentField(draftContract.meiVariablePercent)}
-                            onChange={(event) =>
-                              setDraftContract((current) => ({ ...current, meiVariablePercent: parsePercentMasked(event.target.value) }))
-                            }
-                          />
-                        </label>
-                      ) : (
-                        <label className={fieldClassName("mei_variable_amount")}>Valor variavel (R$)
-                          <input
-                            type="text"
-                            inputMode="decimal"
-                            placeholder="0,00"
-                            value={formatCurrencyField(draftContract.meiVariableAmount)}
-                            onChange={(event) =>
-                              setDraftContract((current) => ({ ...current, meiVariableAmount: parseCurrencyMasked(event.target.value) }))
-                            }
-                          />
-                        </label>
-                      )}
-                      <label>Base da variavel
-                        <select
-                          className="select"
-                          value={draftContract.meiVariableBase ?? "RIDE"}
-                          onChange={(event) =>
-                            setDraftContract((current) => ({
-                              ...current,
-                              meiVariableBase: event.target.value as MeiCommissionBase
-                            }))
-                          }
-                        >
-                          <option value="RIDE">Por corrida</option>
-                          <option value="GROSS_REVENUE">Por faturamento</option>
-                          <option value="RATING">Por avaliacao</option>
-                        </select>
-                      </label>
-                    </>
-                  ) : null}
-                </>
-              ) : (
-                <>
-                  <label className="driver-editor-modal-field-full">Estrutura salarial
-                    <select
-                      className="select"
-                      value={resolveCltSalaryModel(draftContract)}
-                      onChange={(event) => {
-                        const nextSalaryModel = event.target.value as CltSalaryModel;
-                        setDraftContract((current) => {
-                          if (nextSalaryModel === "FIXED") {
-                            return {
-                              ...current,
-                              salaryModel: "FIXED",
-                              commissionType: undefined,
-                              commissionPercent: undefined,
-                              commissionPerRide: undefined,
-                              commissionApplyOn: undefined
-                            };
-                          }
-
-                          return {
-                            ...current,
-                            salaryModel: "FIXED_PLUS_COMMISSION",
-                            commissionType: current.commissionType ?? "PERCENT",
-                            commissionApplyOn: current.commissionApplyOn ?? "RIDE"
-                          };
-                        });
-                      }}
-                    >
-                      <option value="FIXED">Salario fixo</option>
-                      <option value="FIXED_PLUS_COMMISSION">Salario + comissao</option>
-                    </select>
-                  </label>
-                  <label className={fieldClassName("clt_fixed_salary")}>Valor fixo mensal
-                    <input
-                      type="text"
-                      inputMode="decimal"
-                      placeholder="0,00"
-                      value={formatCurrencyField(draftContract.fixedSalary)}
-                      onChange={(event) =>
-                        setDraftContract((current) => ({
-                          ...current,
-                          fixedSalary: parseCurrencyMasked(event.target.value)
-                        }))
-                      }
-                    />
-                  </label>
-                  {resolveCltSalaryModel(draftContract) === "FIXED_PLUS_COMMISSION" ? (
-                    <>
-                      <label>Tipo de comissao
-                        <select
-                          className="select"
-                          value={draftContract.commissionType ?? "PERCENT"}
-                          onChange={(event) =>
-                            setDraftContract((current) => {
-                              const nextType = event.target.value as "PERCENT" | "PER_RIDE";
-                              return {
-                                ...current,
-                                salaryModel: "FIXED_PLUS_COMMISSION",
-                                commissionType: nextType,
-                                commissionApplyOn: current.commissionApplyOn ?? "RIDE",
-                                commissionPercent: nextType === "PERCENT" ? current.commissionPercent : undefined,
-                                commissionPerRide: nextType === "PER_RIDE" ? current.commissionPerRide : undefined
-                              };
-                            })
-                          }
-                        >
-                          <option value="PERCENT">Percentual (%)</option>
-                          <option value="PER_RIDE">Valor por corrida (R$)</option>
-                        </select>
-                      </label>
-                      {(draftContract.commissionType ?? "PERCENT") === "PERCENT" ? (
-                        <label className={fieldClassName("clt_commission_percent")}>Percentual de comissao
-                          <input
-                            type="text"
-                            inputMode="decimal"
-                            placeholder="0"
-                            value={formatPercentField(draftContract.commissionPercent)}
-                            onChange={(event) =>
-                              setDraftContract((current) => ({
-                                ...current,
-                                salaryModel: "FIXED_PLUS_COMMISSION",
-                                commissionPercent: parsePercentMasked(event.target.value)
-                              }))
-                            }
-                          />
-                        </label>
-                      ) : (
-                        <label className={fieldClassName("clt_commission_per_ride")}>Comissao por corrida (R$)
-                          <input
-                            type="text"
-                            inputMode="decimal"
-                            placeholder="0,00"
-                            value={formatCurrencyField(draftContract.commissionPerRide)}
-                            onChange={(event) =>
-                              setDraftContract((current) => ({
-                                ...current,
-                                salaryModel: "FIXED_PLUS_COMMISSION",
-                                commissionPerRide: parseCurrencyMasked(event.target.value)
-                              }))
-                            }
-                          />
-                        </label>
-                      )}
-                      <label>Base da comissao
-                        <select
-                          className="select"
-                          value={draftContract.commissionApplyOn ?? "RIDE"}
-                          onChange={(event) =>
-                            setDraftContract((current) => ({
-                              ...current,
-                              salaryModel: "FIXED_PLUS_COMMISSION",
-                              commissionApplyOn: event.target.value as "RIDE" | "RATING"
-                            }))
-                          }
-                        >
-                          <option value="RIDE">Por corrida</option>
-                          <option value="RATING">Por avaliacao</option>
-                        </select>
-                      </label>
-                    </>
-                  ) : null}
-
-                  <div className="driver-editor-modal-field-full driver-editor-contract-subsection">
-                    <div className="driver-editor-contract-subsection-head">
-                      <strong>Hora extra (CLT)</strong>
-                      <small>Defina a politica de hora extra aplicada a este motorista.</small>
-                    </div>
-                    <div className="form-grid">
-                      <label className="toggle-field">
-                        <span>Hora extra ativa no motorista</span>
-                        <input
-                          type="checkbox"
-                          checked={draftContract.overtimeEnabled ?? true}
-                          onChange={(event) =>
-                            setDraftContract((current) => ({
-                              ...current,
-                              overtimeUseGlobalPolicy: false,
-                              overtimeEnabled: event.target.checked
-                            }))
-                          }
-                        />
-                      </label>
-
-                      {draftContract.overtimeEnabled !== false ? (
-                        <>
-                          <label className={fieldClassName("overtime_policy_mode")}>Destino da hora extra
-                            <select
-                              className="select"
-                              value={draftContract.overtimePolicyMode ?? "PAID"}
-                              onChange={(event) =>
-                                setDraftContract((current) => ({
-                                  ...current,
-                                  overtimeUseGlobalPolicy: false,
-                                  overtimePolicyMode: event.target.value as OvertimePolicyMode
-                                }))
-                              }
-                            >
-                              <option value="PAID">Pagamento em folha</option>
-                              <option value="BANK_HOURS">Banco de horas</option>
-                            </select>
-                          </label>
-
-                          <label>Limite diario (horas) - opcional
-                            <input
-                              type="number"
-                              min="0"
-                              step="0.5"
-                              value={draftContract.overtimeDailyLimitHours ?? ""}
-                              onChange={(event) =>
-                                setDraftContract((current) => ({
-                                  ...current,
-                                  overtimeUseGlobalPolicy: false,
-                                  overtimeDailyLimitHours: parseNumeric(event.target.value)
-                                }))
-                              }
-                            />
-                          </label>
-
-                          <label>Limite semanal (horas) - opcional
-                            <input
-                              type="number"
-                              min="0"
-                              step="0.5"
-                              value={draftContract.overtimeWeeklyLimitHours ?? ""}
-                              onChange={(event) =>
-                                setDraftContract((current) => ({
-                                  ...current,
-                                  overtimeUseGlobalPolicy: false,
-                                  overtimeWeeklyLimitHours: parseNumeric(event.target.value)
-                                }))
-                              }
-                            />
-                          </label>
-
-                          <label className={fieldClassName("overtime_after_daily")}>HE apos X horas no dia
-                            <input
-                              type="number"
-                              min="0"
-                              step="0.5"
-                              value={draftContract.overtimeAfterDailyHours ?? ""}
-                              onChange={(event) =>
-                                setDraftContract((current) => ({
-                                  ...current,
-                                  overtimeUseGlobalPolicy: false,
-                                  overtimeAfterDailyHours: parseNumeric(event.target.value)
-                                }))
-                              }
-                            />
-                          </label>
-
-                          <label>HE apos X horas na semana
-                            <input
-                              type="number"
-                              min="0"
-                              step="0.5"
-                              value={draftContract.overtimeAfterWeeklyHours ?? ""}
-                              onChange={(event) =>
-                                setDraftContract((current) => ({
-                                  ...current,
-                                  overtimeUseGlobalPolicy: false,
-                                  overtimeAfterWeeklyHours: parseNumeric(event.target.value)
-                                }))
-                              }
-                            />
-                          </label>
-
-                          <label className={fieldClassName("overtime_multiplier_50")}>Multiplicador 50%
-                            <input
-                              type="number"
-                              min="0"
-                              step="0.01"
-                              value={draftContract.overtimeMultiplier50 ?? ""}
-                              onChange={(event) =>
-                                setDraftContract((current) => ({
-                                  ...current,
-                                  overtimeUseGlobalPolicy: false,
-                                  overtimeMultiplier50: parseNumeric(event.target.value)
-                                }))
-                              }
-                            />
-                          </label>
-
-                          <label className={fieldClassName("overtime_multiplier_100")}>Multiplicador 100%
-                            <input
-                              type="number"
-                              min="0"
-                              step="0.01"
-                              value={draftContract.overtimeMultiplier100 ?? ""}
-                              onChange={(event) =>
-                                setDraftContract((current) => ({
-                                  ...current,
-                                  overtimeUseGlobalPolicy: false,
-                                  overtimeMultiplier100: parseNumeric(event.target.value)
-                                }))
-                              }
-                            />
-                          </label>
-
-                          <label>Multiplicador noturno
-                            <input
-                              type="number"
-                              min="0"
-                              step="0.01"
-                              value={draftContract.overtimeNightMultiplier ?? ""}
-                              onChange={(event) =>
-                                setDraftContract((current) => ({
-                                  ...current,
-                                  overtimeUseGlobalPolicy: false,
-                                  overtimeNightMultiplier: parseNumeric(event.target.value)
-                                }))
-                              }
-                            />
-                          </label>
-
-                          <label className={fieldClassName("overtime_rounding_minutes")}>Arredondamento (min)
-                            <input
-                              type="number"
-                              min="0"
-                              step="1"
-                              value={draftContract.overtimeRoundingMinutes ?? ""}
-                              onChange={(event) =>
-                                setDraftContract((current) => ({
-                                  ...current,
-                                  overtimeUseGlobalPolicy: false,
-                                  overtimeRoundingMinutes: parseIntMin(event.target.value, 0)
-                                }))
-                              }
-                            />
-                          </label>
-                        </>
-                      ) : null}
-                    </div>
-                  </div>
-                </>
-              )}
-            </div>
-          </section>
-
-          <section className="driver-editor-contract-card driver-editor-contract-card-journey driver-editor-modal-field-full">
-            <div className="driver-editor-contract-card-head"><strong>Jornada de trabalho</strong><small>Regras operacionais e disponibilidade por perfil.</small></div>
-            <div className="form-grid">
-              {draftProfile === "CLT" ? (
-                <>
-                  <label>Turno
-                    <select className="select" value={draftJourney.shift ?? ""} onChange={(event) => setDraftJourney((current) => ({ ...current, shift: event.target.value }))}>
-                      <option value="">Selecionar turno</option>
-                      <option value="Manha">Manha</option>
-                      <option value="Tarde">Tarde</option>
-                      <option value="Noite">Noite</option>
-                      <option value="Comercial">Comercial</option>
-                      <option value="Personalizado">Personalizado</option>
-                    </select>
-                  </label>
-
-                  <label>Escala de trabalho
-                    <select
-                      className="select"
-                      value={resolveJourneyScaleType(draftJourney)}
-                      onChange={(event) => {
-                        const nextType = event.target.value as JourneyScaleType;
-                        setDraftJourney((current) => ({
-                          ...current,
-                          scaleType: nextType,
-                          customScaleWorkDays: nextType === "CUSTOM" ? current.customScaleWorkDays : undefined,
-                          customScaleOffDays: nextType === "CUSTOM" ? current.customScaleOffDays : undefined,
-                          scale: resolveScaleLabel(nextType, current.customScaleWorkDays, current.customScaleOffDays)
-                        }));
-                      }}
-                    >
-                      {journeyScaleOptions.map((option) => (
-                        <option key={option.value} value={option.value}>
-                          {option.label}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-
-                  {resolveJourneyScaleType(draftJourney) === "CUSTOM" ? (
-                    <>
-                      <label>Dias trabalhados por ciclo
-                        <input
-                          type="number"
-                          min="1"
-                          step="1"
-                          value={draftJourney.customScaleWorkDays ?? ""}
-                          onChange={(event) =>
-                            setDraftJourney((current) => {
-                              const workDays = parseIntMin(event.target.value, 1);
-                              return {
-                                ...current,
-                                customScaleWorkDays: workDays,
-                                scale: resolveScaleLabel("CUSTOM", workDays, current.customScaleOffDays)
-                              };
-                            })
-                          }
-                        />
-                      </label>
-                      <label>Dias de folga
-                        <input
-                          type="number"
-                          min="1"
-                          step="1"
-                          value={draftJourney.customScaleOffDays ?? ""}
-                          onChange={(event) =>
-                            setDraftJourney((current) => {
-                              const offDays = parseIntMin(event.target.value, 1);
-                              return {
-                                ...current,
-                                customScaleOffDays: offDays,
-                                scale: resolveScaleLabel("CUSTOM", current.customScaleWorkDays, offDays)
-                              };
-                            })
-                          }
-                        />
-                      </label>
-                    </>
-                  ) : null}
-
-                  <div className="driver-editor-modal-field-full driver-editor-scale-preview">
-                    <strong>
-                      {resolveJourneyScaleType(draftJourney) === "CUSTOM" &&
-                      (draftJourney.customScaleWorkDays ?? 0) > 0 &&
-                      (draftJourney.customScaleOffDays ?? 0) > 0
-                        ? `Ciclo: ${draftJourney.customScaleWorkDays} dias de trabalho / ${draftJourney.customScaleOffDays} de folga`
-                        : resolveScaleLabel(
-                            resolveJourneyScaleType(draftJourney),
-                            draftJourney.customScaleWorkDays,
-                            draftJourney.customScaleOffDays
-                          )}
-                    </strong>
-                    <div className="driver-editor-scale-preview-track" aria-hidden="true">
-                      {resolveScalePreviewTokens(resolveJourneyScaleType(draftJourney), draftJourney.customScaleWorkDays, draftJourney.customScaleOffDays).map((item, index) => (
-                        <span key={`${item}-${index}`} className={`driver-editor-scale-token ${item === "T" ? "is-work" : "is-off"}`}>
-                          {item}
-                        </span>
-                      ))}
-                    </div>
-                  </div>
-
-                  <div className="driver-editor-modal-field-full">
-                    <span>Modelo de jornada</span>
-                    <div className="driver-editor-profile-picker driver-editor-contract-toggle-picker">
-                      <button
-                        type="button"
-                        className={`driver-editor-profile-option ${draftJourney.fixedSchedule === false ? "" : "is-active"}`}
-                        onClick={() =>
-                          setDraftJourney((current) => ({
-                            ...current,
-                            fixedSchedule: true,
-                            fixedScheduleMode: current.fixedScheduleMode ?? "UNIFORM",
-                            availabilityStartTime: "",
-                            availabilityEndTime: "",
-                            availableDays:
-                              current.availableDays && current.availableDays.length > 0
-                                ? current.availableDays
-                                : defaultWeekDays,
-                            acceptsOutsideSchedule: undefined
-                          }))
-                        }
-                      >
-                        <div className="driver-editor-profile-option-copy">
-                          <strong>Horario fixo</strong>
-                        </div>
-                      </button>
-                      <button
-                        type="button"
-                        className={`driver-editor-profile-option ${draftJourney.fixedSchedule === false ? "is-active" : ""}`}
-                        onClick={() =>
-                          setDraftJourney((current) => {
-                            const nextAvailableDays =
-                              current.availableDays && current.availableDays.length > 0
-                                ? current.availableDays
-                                : defaultWeekDays;
-                            return {
-                              ...current,
-                              fixedSchedule: false,
-                              fixedScheduleMode: undefined,
-                              startTime: "",
-                              endTime: "",
-                              daySchedules: normalizeJourneyDaySchedules(
-                                current,
-                                nextAvailableDays.filter(
-                                  (day, index, list): day is WeekDay => isWeekDay(day) && list.indexOf(day) === index
-                                ),
-                                current.availabilityStartTime || "06:00",
-                                current.availabilityEndTime || "18:00"
-                              ),
-                              availabilityStartTime: current.availabilityStartTime || "06:00",
-                              availabilityEndTime: current.availabilityEndTime || "18:00",
-                              availableDays: nextAvailableDays,
-                              acceptsOutsideSchedule: current.acceptsOutsideSchedule ?? false
-                            };
-                          })
-                        }
-                      >
-                        <div className="driver-editor-profile-option-copy">
-                          <strong>Horario variavel / sob demanda</strong>
-                        </div>
-                      </button>
-                    </div>
-                  </div>
-
-                  {draftJourney.fixedSchedule === false ? (
-                    <>
-                      <div className="driver-editor-modal-field-full driver-editor-contract-subsection driver-editor-contract-subsection-compact">
-                        <div className="driver-editor-contract-subsection-head">
-                          <strong>Horario por dia (variavel/sob demanda)</strong>
-                          <small>Ative cada dia e configure inicio/fim individual da disponibilidade.</small>
-                        </div>
-                        <div className="form-grid">
-                          {normalizedVariableDaySchedules.map((daySchedule) => {
-                            const dayLabel = weekDayOptions.find((item) => item.value === daySchedule.day)?.label ?? daySchedule.day;
-                            return (
-                              <div key={`variable-${daySchedule.day}`} className="driver-editor-modal-field-full driver-editor-day-row">
-                                <label className="driver-editor-day-check">
-                                  <input
-                                    type="checkbox"
-                                    checked={daySchedule.enabled}
-                                    onChange={(event) =>
-                                      updateVariableDaySchedule(daySchedule.day, { enabled: event.target.checked })
-                                    }
-                                  />
-                                  <span>{dayLabel}</span>
-                                </label>
-                                <label className="driver-editor-day-time-label">{`Inicio (${dayLabel})`}
-                                  <input
-                                    type="time"
-                                    value={daySchedule.startTime ?? ""}
-                                    disabled={!daySchedule.enabled}
-                                    onChange={(event) =>
-                                      updateVariableDaySchedule(daySchedule.day, { startTime: event.target.value })
-                                    }
-                                  />
-                                </label>
-                                <label className="driver-editor-day-time-label">{`Fim (${dayLabel})`}
-                                  <input
-                                    type="time"
-                                    value={daySchedule.endTime ?? ""}
-                                    disabled={!daySchedule.enabled}
-                                    onChange={(event) =>
-                                      updateVariableDaySchedule(daySchedule.day, { endTime: event.target.value })
-                                    }
-                                  />
-                                </label>
-                              </div>
-                            );
-                          })}
-                          <div className="driver-editor-modal-field-full driver-editor-contract-inline-note">
-                            <strong>{`Disponibilidade semanal estimada: ${formatDurationLabel(variableWeeklyMinutes)}`}</strong>
-                          </div>
-                        </div>
-                      </div>
-                      <label>Aceita chamadas fora do horario?
-                        <select
-                          className="select"
-                          value={draftJourney.acceptsOutsideSchedule ? "YES" : "NO"}
-                          onChange={(event) =>
-                            setDraftJourney((current) => ({
-                              ...current,
-                              acceptsOutsideSchedule: event.target.value === "YES"
-                            }))
-                          }
-                        >
-                          <option value="YES">Sim</option>
-                          <option value="NO">Nao</option>
-                        </select>
-                      </label>
-                      <label className="driver-editor-modal-field-full">Observacoes
-                        <textarea
-                          rows={3}
-                          value={draftJourney.availabilityNotes ?? ""}
-                          onChange={(event) =>
-                            setDraftJourney((current) => ({ ...current, availabilityNotes: event.target.value }))
-                          }
-                          placeholder="Detalhes de disponibilidade e excecoes de atendimento."
-                        />
-                      </label>
-                    </>
-                  ) : (
-                    <>
-                      <div className="driver-editor-modal-field-full">
-                        <span>Dias ativos da semana</span>
-                        <div className="driver-editor-availability-days">
-                          {weekDayOptions.map((day) => {
-                            const isActive = fixedScheduleActiveDays.includes(day.value);
-                            return (
-                              <button
-                                key={day.value}
-                                type="button"
-                                className={`driver-editor-availability-day ${isActive ? "is-active" : ""}`}
-                                onClick={() => toggleFixedDay(day.value)}
-                              >
-                                {day.label}
-                              </button>
-                            );
-                          })}
-                        </div>
-                      </div>
-
-                      <div className="driver-editor-modal-field-full">
-                        <span>Configuracao do horario</span>
-                        <div className="driver-editor-profile-picker driver-editor-contract-toggle-picker">
-                          <button
-                            type="button"
-                            className={`driver-editor-profile-option ${fixedScheduleMode === "UNIFORM" ? "is-active" : ""}`}
-                            onClick={() => updateFixedScheduleMode("UNIFORM")}
-                          >
-                            <div className="driver-editor-profile-option-copy">
-                              <strong>Horario fixo para todos os dias ativos</strong>
-                            </div>
-                          </button>
-                          <button
-                            type="button"
-                            className={`driver-editor-profile-option ${fixedScheduleMode === "PER_DAY" ? "is-active" : ""}`}
-                            onClick={() => updateFixedScheduleMode("PER_DAY")}
-                          >
-                            <div className="driver-editor-profile-option-copy">
-                              <strong>Horario personalizado por dia</strong>
-                            </div>
-                          </button>
-                        </div>
-                      </div>
-
-                      {fixedScheduleMode === "UNIFORM" ? (
-                        <>
-                          <label>Inicio da jornada
-                            <input
-                              type="time"
-                              value={draftJourney.startTime ?? ""}
-                              onChange={(event) =>
-                                setDraftJourney((current) => ({ ...current, startTime: event.target.value }))
-                              }
-                            />
-                          </label>
-                          <label>Fim da jornada
-                            <input
-                              type="time"
-                              value={draftJourney.endTime ?? ""}
-                              onChange={(event) =>
-                                setDraftJourney((current) => ({ ...current, endTime: event.target.value }))
-                              }
-                            />
-                          </label>
-                          <div className="driver-editor-modal-field-full driver-editor-contract-inline-note">
-                            <strong>{`Carga diaria: ${formatDurationLabel(uniformDailyMinutes)}`}</strong>
-                            <span>{`Carga semanal estimada: ${formatDurationLabel(uniformWeeklyMinutes)} (${fixedScheduleActiveDays.length} dia(s) ativo(s)).`}</span>
-                          </div>
-                        </>
-                      ) : (
-                      <div className="driver-editor-modal-field-full driver-editor-contract-subsection driver-editor-contract-subsection-compact">
-                          <div className="driver-editor-contract-subsection-head">
-                            <strong>Horario por dia</strong>
-                            <small>Ative o dia e configure inicio/fim individual.</small>
-                          </div>
-                          <div className="form-grid">
-                            {normalizedJourneyDaySchedules.map((daySchedule) => {
-                              const dayLabel = weekDayOptions.find((item) => item.value === daySchedule.day)?.label ?? daySchedule.day;
-                              const dayDuration = daySchedule.enabled
-                                ? calculateDurationMinutes(daySchedule.startTime, daySchedule.endTime)
-                                : undefined;
-                              return (
-                                <div key={daySchedule.day} className="driver-editor-modal-field-full">
-                                  <div className="driver-editor-contract-inline-note">
-                                    <strong>{dayLabel}</strong>
-                                    <label className="driver-editor-modal-checkbox">
-                                      <input
-                                        type="checkbox"
-                                        checked={daySchedule.enabled}
-                                        onChange={(event) =>
-                                          updateFixedDaySchedule(daySchedule.day, { enabled: event.target.checked })
-                                        }
-                                      />
-                                      <span>Dia ativo</span>
-                                    </label>
-                                  </div>
-                                  {daySchedule.enabled ? (
-                                    <div className="form-grid">
-                                      <label>{`Inicio (${dayLabel})`}
-                                        <input
-                                          type="time"
-                                          value={daySchedule.startTime ?? ""}
-                                          onChange={(event) =>
-                                            updateFixedDaySchedule(daySchedule.day, { startTime: event.target.value })
-                                          }
-                                        />
-                                      </label>
-                                      <label>{`Fim (${dayLabel})`}
-                                        <input
-                                          type="time"
-                                          value={daySchedule.endTime ?? ""}
-                                          onChange={(event) =>
-                                            updateFixedDaySchedule(daySchedule.day, { endTime: event.target.value })
-                                          }
-                                        />
-                                      </label>
-                                      <div className="driver-editor-modal-field-full driver-editor-contract-inline-note">
-                                        <span>{`Carga do dia: ${formatDurationLabel(dayDuration)}`}</span>
-                                      </div>
-                                    </div>
-                                  ) : null}
-                                </div>
-                              );
-                            })}
-                            <div className="driver-editor-modal-field-full driver-editor-contract-inline-note">
-                              <strong>{`Carga semanal estimada: ${formatDurationLabel(perDayWeeklyMinutes)}`}</strong>
-                            </div>
-                          </div>
-                        </div>
-                      )}
-                    </>
-                  )}
-                </>
-              ) : null}
-              {draftProfile === "INTERMITENTE" ? (
-                <>
-                  <div className="driver-editor-modal-field-full driver-editor-contract-subsection">
-                    <div className="driver-editor-contract-subsection-head">
-                      <strong>Convocacao</strong>
-                      <small>Defina como o motorista e acionado para trabalhar.</small>
-                    </div>
-                    <div className="form-grid">
-                      <label className={fieldClassName("intermittent_convocation_mode")}>Modelo de convocacao
-                        <select
-                          className="select"
-                          value={draftContract.intermittentConvocationMode ?? ""}
-                          onChange={(event) =>
-                            setDraftContract((current) => ({
-                              ...current,
-                              intermittentConvocationMode: event.target.value as IntermittentConvocationMode
-                            }))
-                          }
-                        >
-                          <option value="">Selecionar modelo</option>
-                          <option value="ON_DEMAND">Sob demanda</option>
-                          <option value="ADVANCE_NOTICE">Com antecedencia minima</option>
-                          <option value="FIXED_WINDOW">Fixo por periodo</option>
-                        </select>
-                      </label>
-
-                      {draftContract.intermittentConvocationMode === "ADVANCE_NOTICE" ? (
-                        <label className={fieldClassName("intermittent_notice_hours")}>Aviso minimo (horas)
-                          <input
-                            type="number"
-                            min="0"
-                            step="1"
-                            value={draftContract.intermittentNoticeHours ?? ""}
-                            onChange={(event) =>
-                              setDraftContract((current) => ({
-                                ...current,
-                                intermittentNoticeHours: parseIntMin(event.target.value, 0)
-                              }))
-                            }
-                          />
-                        </label>
-                      ) : null}
-
-                      <label className="driver-editor-modal-field-full">Regras e acordos de convocacao
-                        <textarea
-                          rows={3}
-                          value={draftContract.intermittentConvocationNotes ?? ""}
-                          onChange={(event) =>
-                            setDraftContract((current) => ({
-                              ...current,
-                              intermittentConvocationNotes: event.target.value
-                            }))
-                          }
-                          placeholder="Detalhe regras internas para convocacao e aceite."
-                        />
-                      </label>
-                    </div>
-                  </div>
-
-                  <div className="driver-editor-modal-field-full driver-editor-contract-subsection">
-                    <div className="driver-editor-contract-subsection-head">
-                      <strong>Disponibilidade de trabalho</strong>
-                      <small>Defina disponibilidade por dia para convocações variaveis/sob demanda.</small>
-                    </div>
-                    <div className="form-grid">
-                      {normalizedVariableDaySchedules.map((daySchedule) => {
-                        const dayLabel = weekDayOptions.find((item) => item.value === daySchedule.day)?.label ?? daySchedule.day;
-                        return (
-                          <div
-                            key={`intermittent-variable-${daySchedule.day}`}
-                            className="driver-editor-modal-field-full driver-editor-day-row"
-                          >
-                            <label className="driver-editor-day-check">
-                              <input
-                                type="checkbox"
-                                checked={daySchedule.enabled}
-                                onChange={(event) =>
-                                  updateVariableDaySchedule(daySchedule.day, { enabled: event.target.checked })
-                                }
-                              />
-                              <span>{dayLabel}</span>
-                            </label>
-                            <label className="driver-editor-day-time-label">{`Inicio (${dayLabel})`}
-                              <input
-                                type="time"
-                                value={daySchedule.startTime ?? ""}
-                                disabled={!daySchedule.enabled}
-                                onChange={(event) =>
-                                  updateVariableDaySchedule(daySchedule.day, { startTime: event.target.value })
-                                }
-                              />
-                            </label>
-                            <label className="driver-editor-day-time-label">{`Fim (${dayLabel})`}
-                              <input
-                                type="time"
-                                value={daySchedule.endTime ?? ""}
-                                disabled={!daySchedule.enabled}
-                                onChange={(event) =>
-                                  updateVariableDaySchedule(daySchedule.day, { endTime: event.target.value })
-                                }
-                              />
-                            </label>
-                          </div>
-                        );
-                      })}
-                      <div className="driver-editor-modal-field-full driver-editor-contract-inline-note">
-                        <strong>{`Disponibilidade semanal estimada: ${formatDurationLabel(variableWeeklyMinutes)}`}</strong>
-                        <span>Dias disponiveis = pode trabalhar.</span>
-                      </div>
-                      <label>Aceita chamadas fora do horario?
-                        <select
-                          className="select"
-                          value={draftJourney.acceptsOutsideSchedule ? "YES" : "NO"}
-                          onChange={(event) =>
-                            setDraftJourney((current) => ({
-                              ...current,
-                              fixedSchedule: false,
-                              acceptsOutsideSchedule: event.target.value === "YES"
-                            }))
-                          }
-                        >
-                          <option value="YES">Sim</option>
-                          <option value="NO">Nao</option>
-                        </select>
-                      </label>
-                    </div>
-                  </div>
-
-                  <div className="driver-editor-modal-field-full driver-editor-contract-subsection">
-                    <div className="driver-editor-contract-subsection-head">
-                      <strong>Preferencias e restricoes</strong>
-                      <small>Dias preferenciais = dias em que prefere ser convocado.</small>
-                    </div>
-                    <div className="form-grid">
-                      <div className="driver-editor-modal-field-full">
-                        <span>Dias preferenciais</span>
-                        <div className="driver-editor-availability-days">
-                          {weekDayOptions.map((day) => {
-                            const selectedDays = draftContract.intermittentPreferredWeekDays ?? [];
-                            const isSelected = selectedDays.includes(day.value);
-                            return (
-                              <button
-                                key={`pref-${day.value}`}
-                                type="button"
-                                className={`driver-editor-availability-day ${isSelected ? "is-active" : ""}`}
-                                onClick={() =>
-                                  setDraftContract((current) => {
-                                    const currentDays = current.intermittentPreferredWeekDays ?? [];
-                                    const nextDays = currentDays.includes(day.value)
-                                      ? currentDays.filter((item) => item !== day.value)
-                                      : [...currentDays, day.value];
-                                    return {
-                                      ...current,
-                                      intermittentPreferredWeekDays: nextDays,
-                                      intermittentPreferredDays: nextDays.join(", ")
-                                    };
-                                  })
-                                }
-                              >
-                                {day.label}
-                              </button>
-                            );
-                          })}
-                        </div>
-                      </div>
-                      <label className="driver-editor-modal-field-full">Restricoes e observacoes
-                        <textarea
-                          rows={3}
-                          value={draftJourney.availabilityNotes ?? ""}
-                          onChange={(event) =>
-                            setDraftJourney((current) => ({ ...current, fixedSchedule: false, availabilityNotes: event.target.value }))
-                          }
-                          placeholder="Restricoes operacionais, periodos de indisponibilidade e excecoes."
-                        />
-                      </label>
-                    </div>
-                    <div className="driver-editor-contract-inline-note">
-                      <strong>Resumo automatico</strong>
-                      <span>{intermittentOperationalSummary}</span>
-                    </div>
-                  </div>
-                </>
-              ) : null}
-              {draftProfile === "MEI" ? (
-                <>
-                  <div className="driver-editor-modal-field-full driver-editor-contract-subsection">
-                    <div className="driver-editor-contract-subsection-head">
-                      <strong>Forma de atuacao</strong>
-                      <small>Modelo operacional do parceiro na plataforma.</small>
-                    </div>
-                    <div className="form-grid">
-                      <label className={fieldClassName("mei_work_mode")}>Forma de atuacao
-                        <select
-                          className="select"
-                          value={draftContract.meiWorkMode ?? "ON_DEMAND"}
-                          onChange={(event) =>
-                            setDraftContract((current) => ({
-                              ...current,
-                              meiWorkMode: event.target.value as MeiWorkMode
-                            }))
-                          }
-                        >
-                          <option value="ON_DEMAND">Sob demanda</option>
-                          <option value="SCHEDULED">Agenda definida</option>
-                          <option value="MIXED">Mista</option>
-                        </select>
-                      </label>
-                    </div>
-                  </div>
-
-                  <div className="driver-editor-modal-field-full driver-editor-contract-subsection">
-                    <div className="driver-editor-contract-subsection-head">
-                      <strong>Forma de pagamento</strong>
-                      <small>Liquidacao financeira separada da regra de remuneracao.</small>
-                    </div>
-                    <div className="form-grid">
-                      <label className={fieldClassName("mei_payment_method")}>Forma de pagamento
-                        <select className="select" value={draftContract.paymentMethod ?? ""} onChange={(event) => setDraftContract((current) => ({ ...current, paymentMethod: event.target.value }))}>
-                          <option value="">Selecionar forma</option>
-                          <option value="PIX">Pix</option>
-                          <option value="TRANSFERENCIA">Transferencia</option>
-                          <option value="BOLETO">Boleto</option>
-                        </select>
-                      </label>
-                      <label className={fieldClassName("mei_payment_frequency")}>Frequencia de pagamento
-                        <select className="select" value={draftContract.paymentFrequency ?? ""} onChange={(event) => setDraftContract((current) => ({ ...current, paymentFrequency: event.target.value }))}>
-                          <option value="">Selecionar frequencia</option>
-                          <option value="DIARIA">Diaria</option>
-                          <option value="SEMANAL">Semanal</option>
-                          <option value="QUINZENAL">Quinzenal</option>
-                          <option value="MENSAL">Mensal</option>
-                        </select>
-                      </label>
-                    </div>
-                  </div>
-
-                  <div className="driver-editor-modal-field-full driver-editor-contract-subsection">
-                    <div className="driver-editor-contract-subsection-head">
-                      <strong>Operacao (veiculo e custos)</strong>
-                      <small>Defina uso de veiculo e divisao de responsabilidades.</small>
-                    </div>
-                    <div className="form-grid">
-                      <label className={fieldClassName("mei_operation_vehicle_mode")}>Forma de operacao
-                        <select
-                          className="select"
-                          value={draftContract.meiOperationVehicleMode ?? "OWN_VEHICLE"}
-                          onChange={(event) =>
-                            setDraftContract((current) => ({
-                              ...current,
-                              meiOperationVehicleMode: event.target.value as MeiOperationVehicleMode
-                            }))
-                          }
-                        >
-                          <option value="OWN_VEHICLE">Veiculo proprio</option>
-                          <option value="COMPANY_VEHICLE">Veiculo da empresa</option>
-                          <option value="BOTH">Ambos</option>
-                        </select>
-                      </label>
-                      <label className={fieldClassName("mei_fuel_responsibility")}>Combustivel
-                        <select
-                          className="select"
-                          value={draftContract.meiFuelResponsibility ?? "DRIVER"}
-                          onChange={(event) =>
-                            setDraftContract((current) => ({
-                              ...current,
-                              meiFuelResponsibility: event.target.value as MeiCostResponsibility
-                            }))
-                          }
-                        >
-                          <option value="DRIVER">Motorista</option>
-                          <option value="COMPANY">Empresa</option>
-                          <option value="SHARED">Dividido</option>
-                        </select>
-                      </label>
-                      <label className={fieldClassName("mei_maintenance_responsibility")}>Manutencao
-                        <select
-                          className="select"
-                          value={draftContract.meiMaintenanceResponsibility ?? "DRIVER"}
-                          onChange={(event) =>
-                            setDraftContract((current) => ({
-                              ...current,
-                              meiMaintenanceResponsibility: event.target.value as MeiCostResponsibility
-                            }))
-                          }
-                        >
-                          <option value="DRIVER">Motorista</option>
-                          <option value="COMPANY">Empresa</option>
-                          <option value="SHARED">Dividido</option>
-                        </select>
-                      </label>
-                    </div>
-                  </div>
-
-                  <div className="driver-editor-modal-field-full driver-editor-contract-inline-note">
-                    <strong>Resumo operacional</strong>
-                    <span>{meiOperationalSummary}</span>
-                  </div>
-                </>
-              ) : null}
-            </div>
-          </section>
-
-          <section className="driver-editor-contract-card driver-editor-contract-card-notes driver-editor-modal-field-full">
-            <div className="driver-editor-contract-card-head"><strong>Observacoes</strong><small>Detalhes operacionais e administrativos.</small></div>
-            <label className="driver-editor-modal-field-full">Observacoes do contrato
-              <textarea rows={4} value={draftProfile === "MEI" ? (draftContract.fiscalNotes ?? "") : (draftContract.notes ?? "")} onChange={(event) => setDraftContract((current) => ({ ...current, [draftProfile === "MEI" ? "fiscalNotes" : "notes"]: event.target.value }))} />
-            </label>
-          </section>
-            </>
-          ) : null}
-            </>
-          ) : null}
           </fieldset>
         </div>
+      </DriverProfileEditorModal>
+
+      <DriverProfileEditorModal
+        open={isContractHistoryModalOpen}
+        title="Contratos anteriores"
+        description="Historico completo de contratos gerados para este motorista."
+        onClose={() => setIsContractHistoryModalOpen(false)}
+        footer={
+          <button type="button" className="secondary" onClick={() => setIsContractHistoryModalOpen(false)}>
+            Fechar
+          </button>
+        }
+      >
+        {hasContractsHistory ? (
+          <div className="driver-editor-contracts-history">
+            {contractsHistory.map((item) => (
+              <article key={item.id} className="driver-editor-contracts-history-item">
+                <div>
+                  <strong>{item.title}</strong>
+                  <small>
+                    {resolveEmploymentContractProfileLabel(item.profile)} - {resolveEmploymentContractKindLabel(item.kind)} -{" "}
+                    {new Date(item.generatedAt).toLocaleString("pt-BR")}
+                  </small>
+                  <small>
+                    Modelo: {item.templateName || item.templateKey} ({item.templateVersion})
+                  </small>
+                  <small>
+                    Vigencia: {item.validFrom ? formatDatePtBr(item.validFrom) : "-"} ate{" "}
+                    {item.validTo ? formatDatePtBr(item.validTo) : "indeterminado"}
+                  </small>
+                  {item.signedAt ? <small>Assinado em {new Date(item.signedAt).toLocaleString("pt-BR")}.</small> : null}
+                  {item.terminatedAt ? (
+                    <small>Encerrado em {new Date(item.terminatedAt).toLocaleString("pt-BR")}.</small>
+                  ) : null}
+                </div>
+                <div className="driver-editor-contracts-history-actions">
+                  <span className={`driver-editor-contracts-status-chip is-${resolveEmploymentContractStatusTone(item.status)}`}>
+                    {resolveEmploymentContractStatusLabel(item.status)}
+                  </span>
+                  <button type="button" className="secondary" onClick={() => handleViewContractClick(item)}>
+                    Pre-visualizar
+                  </button>
+                  <button type="button" className="secondary" onClick={() => handlePrintContractClick(item)}>
+                    Imprimir
+                  </button>
+                </div>
+              </article>
+            ))}
+          </div>
+        ) : (
+          <div className="driver-editor-contracts-empty">Nenhum contrato anterior foi encontrado para este motorista.</div>
+        )}
       </DriverProfileEditorModal>
 
       <DriverProfileEditorModal

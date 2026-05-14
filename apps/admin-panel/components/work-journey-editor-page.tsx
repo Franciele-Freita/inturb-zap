@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { FormEvent, useEffect, useMemo, useState } from "react";
-import { formatDateTime } from "../lib/api";
+import { DsrWeeklyRestDay, formatDateTime, request } from "../lib/api";
 import {
   BreakType,
   DAY_OPTIONS,
@@ -12,8 +12,6 @@ import {
   JourneyType,
   WorkJourneyTemplate,
   formatDayList,
-  loadWorkJourneys,
-  saveWorkJourneys
 } from "../lib/work-journeys";
 
 type Mode = "create" | "edit" | "view";
@@ -27,10 +25,17 @@ type JourneyFormState = {
   name: string;
   description: string;
   isActive: boolean;
+  dsrEnabled: boolean;
+  dsrWeeklyRestDay: DsrWeeklyRestDay;
+  dsrReflectOvertime: boolean;
+  dsrReflectNight: boolean;
+  dsrLoseOnUnjustifiedAbsence: boolean;
+  dsrDescription: string;
   type: JourneyType;
   breakType: BreakType;
   breakDurationMinutes: string;
   notes: string;
+  fixedScaleType: FixedScaleType;
   fixedActiveDays: DayOfWeek[];
   fixedStartTime: string;
   fixedEndTime: string;
@@ -58,6 +63,7 @@ type JourneyFormState = {
 
 type InlineFieldKey =
   | "name"
+  | "dsrWeeklyRestDay"
   | "breakDurationMinutes"
   | "fixedActiveDays"
   | "fixedStartTime"
@@ -90,10 +96,17 @@ const defaultForm: JourneyFormState = {
   name: "",
   description: "",
   isActive: true,
+  dsrEnabled: false,
+  dsrWeeklyRestDay: "SUN",
+  dsrReflectOvertime: true,
+  dsrReflectNight: true,
+  dsrLoseOnUnjustifiedAbsence: false,
+  dsrDescription: "",
   type: "FIXED",
   breakType: "FIXED",
   breakDurationMinutes: "60",
   notes: "",
+  fixedScaleType: "FIVE_TWO",
   fixedActiveDays: ["MON", "TUE", "WED", "THU", "FRI"],
   fixedStartTime: "08:00",
   fixedEndTime: "17:00",
@@ -131,6 +144,24 @@ const DAY_LONG_LABEL: Record<DayOfWeek, string> = {
 
 const WORKWEEK_DAYS: DayOfWeek[] = ["MON", "TUE", "WED", "THU", "FRI"];
 const WEEKEND_PEAK_DAYS: DayOfWeek[] = ["FRI", "SAT", "SUN"];
+const BREAK_QUICK_PRESETS = [
+  { label: "15 min", minutes: 15 },
+  { label: "30 min", minutes: 30 },
+  { label: "1h (Padrao)", minutes: 60 },
+  { label: "1h 30m", minutes: 90 }
+] as const;
+const CLT_DEFAULT_DAILY_LIMIT = 8;
+const CLT_DEFAULT_WEEKLY_LIMIT = 44;
+
+type TimelineSegment = {
+  startMinute: number;
+  endMinute: number;
+};
+
+type FixedJourneyTimeline = {
+  workSegments: TimelineSegment[];
+  breakSegments: TimelineSegment[];
+};
 
 function toNum(value: string): number | undefined {
   const parsed = Number(value.trim().replace(",", "."));
@@ -151,6 +182,61 @@ function toMinutes(value: string): number {
   const hour = Number(hourRaw);
   const minute = Number(minuteRaw);
   return hour * 60 + minute;
+}
+
+function splitRangeAcrossDay(startMinute: number, endMinute: number): TimelineSegment[] {
+  if (endMinute <= startMinute) return [];
+
+  const pieces: TimelineSegment[] = [];
+  let cursor = startMinute;
+
+  while (cursor < endMinute) {
+    const dayStart = Math.floor(cursor / 1440) * 1440;
+    const dayEnd = dayStart + 1440;
+    const segmentEnd = Math.min(endMinute, dayEnd);
+    const startInDay = cursor - dayStart;
+    const endInDay = segmentEnd - dayStart;
+    pieces.push({
+      startMinute: startInDay,
+      endMinute: endInDay === 0 ? 1440 : endInDay
+    });
+    cursor = segmentEnd;
+  }
+
+  return pieces;
+}
+
+function buildFixedJourneyTimeline(form: JourneyFormState): FixedJourneyTimeline | null {
+  if (form.type !== "FIXED") return null;
+  if (!isClock(form.fixedStartTime) || !isClock(form.fixedEndTime)) return null;
+
+  const startMinute = toMinutes(form.fixedStartTime);
+  const endRaw = toMinutes(form.fixedEndTime);
+  const endMinute = endRaw <= startMinute ? endRaw + 1440 : endRaw;
+  const shiftDuration = endMinute - startMinute;
+  if (shiftDuration <= 0) return null;
+
+  const requestedBreakMinutes = form.breakType === "NONE" ? 0 : Math.max(0, toInt(form.breakDurationMinutes) ?? 0);
+  const breakMinutes = Math.min(requestedBreakMinutes, Math.max(0, shiftDuration - 15));
+
+  if (breakMinutes <= 0) {
+    return {
+      workSegments: splitRangeAcrossDay(startMinute, endMinute),
+      breakSegments: []
+    };
+  }
+
+  const breakStart = startMinute + Math.floor((shiftDuration - breakMinutes) / 2);
+  const breakEnd = breakStart + breakMinutes;
+  const workRanges: Array<[number, number]> = [
+    [startMinute, breakStart],
+    [breakEnd, endMinute]
+  ];
+
+  return {
+    workSegments: workRanges.flatMap(([rangeStart, rangeEnd]) => splitRangeAcrossDay(rangeStart, rangeEnd)),
+    breakSegments: splitRangeAcrossDay(breakStart, breakEnd)
+  };
 }
 
 function formatHoursValue(value: number): string {
@@ -190,6 +276,23 @@ function deriveScaleTypeFromDays(days: DayOfWeek[]): FixedScaleType {
   return "CUSTOM";
 }
 
+function resolveFixedPresetDays(scaleType: FixedScaleType): DayOfWeek[] {
+  if (scaleType === "FIVE_TWO") {
+    return ["MON", "TUE", "WED", "THU", "FRI"];
+  }
+  if (scaleType === "SIX_ONE") {
+    return ["MON", "TUE", "WED", "THU", "FRI", "SAT"];
+  }
+  if (scaleType === "TWELVE_THIRTY_SIX") {
+    return ["MON", "TUE", "WED", "THU", "FRI", "SAT", "SUN"];
+  }
+  return [];
+}
+
+function isFixedCycleScale(form: JourneyFormState): boolean {
+  return form.type === "FIXED" && form.fixedScaleType === "TWELVE_THIRTY_SIX";
+}
+
 function computeWorkedHoursFromSchedule(
   startTime: string,
   endTime: string,
@@ -217,17 +320,40 @@ function deriveFlexibleDailyFromWeekly(weeklyHours: number | undefined, days: Da
 }
 
 function mapJourneyToForm(journey: WorkJourneyTemplate): JourneyFormState {
+  const mappedScaleType =
+    journey.fixedConfig?.scaleType ?? deriveScaleTypeFromDays(
+      journey.fixedConfig?.activeDays ?? journey.allowedDays ?? ["MON", "TUE", "WED", "THU", "FRI"]
+    );
+  const fixedScaleType =
+    mappedScaleType === "FIVE_TWO" ||
+    mappedScaleType === "SIX_ONE" ||
+    mappedScaleType === "TWELVE_THIRTY_SIX" ||
+    mappedScaleType === "CUSTOM"
+      ? mappedScaleType
+      : "CUSTOM";
+  const fixedActiveDaysRaw =
+    journey.fixedConfig?.activeDays ?? journey.allowedDays ?? ["MON", "TUE", "WED", "THU", "FRI"];
+  const fixedActiveDays =
+    fixedScaleType === "CUSTOM"
+      ? normalizeDays(fixedActiveDaysRaw)
+      : resolveFixedPresetDays(fixedScaleType);
+
   return {
     name: journey.name,
     description: journey.description ?? "",
     isActive: journey.isActive,
+    dsrEnabled: journey.dsrPolicy?.enabled ?? false,
+    dsrWeeklyRestDay: journey.dsrPolicy?.weeklyRestDay ?? "SUN",
+    dsrReflectOvertime: journey.dsrPolicy?.reflectOvertime ?? true,
+    dsrReflectNight: journey.dsrPolicy?.reflectNight ?? true,
+    dsrLoseOnUnjustifiedAbsence: journey.dsrPolicy?.loseOnUnjustifiedAbsence ?? false,
+    dsrDescription: journey.dsrPolicy?.description ?? "",
     type: journey.type,
     breakType: journey.breakType,
     breakDurationMinutes: journey.breakDurationMinutes === undefined ? "0" : String(journey.breakDurationMinutes),
     notes: journey.notes ?? "",
-    fixedActiveDays: normalizeDays(
-      journey.fixedConfig?.activeDays ?? journey.allowedDays ?? ["MON", "TUE", "WED", "THU", "FRI"]
-    ),
+    fixedScaleType,
+    fixedActiveDays,
     fixedStartTime: journey.fixedConfig?.startTime ?? "08:00",
     fixedEndTime: journey.fixedConfig?.endTime ?? "17:00",
     fixedDailyHours: String(journey.fixedConfig?.dailyHours ?? 8),
@@ -260,31 +386,30 @@ function mapJourneyToForm(journey: WorkJourneyTemplate): JourneyFormState {
 
 function getTypeDescription(type: JourneyType): string {
   if (type === "FIXED") {
-    return "Jornada com horarios definidos e recorrentes, aplicada a rotinas com entrada e saida previsiveis.";
+    return "Horario fixo com entrada e saida previsiveis. Exemplo: 08:00 ate 17:00.";
   }
   if (type === "FLEXIBLE") {
-    return "Jornada com carga horaria definida, mas com liberdade dentro de faixas de entrada e saida permitidas.";
+    return "Horario flexivel: o motorista escolhe quando entrar e sair dentro das faixas permitidas.";
   }
-  return "Jornada sob convocacao, com definicao de disponibilidade e limites por convocacao.";
+  return "Trabalho por chamada: a pessoa so trabalha quando for convocada.";
 }
 
 function getSpecificSectionMeta(type: JourneyType): { title: string; description: string } {
   if (type === "FIXED") {
     return {
       title: "Regras da jornada fixa",
-      description: "Foco em horario fixo e recorrencia. Entrada e saida sao a base da carga calculada."
+      description: "Defina os dias da semana e o horario padrao de trabalho."
     };
   }
   if (type === "FLEXIBLE") {
     return {
       title: "Regras da jornada flexivel",
-      description:
-        "O colaborador deve cumprir a carga horaria prevista respeitando os dias permitidos e as faixas configuradas."
+      description: "Defina carga semanal e janelas de entrada e saida."
     };
   }
   return {
     title: "Regras da jornada intermitente",
-    description: "Configure quando o colaborador pode ser convocado e os limites de cada convocacao."
+    description: "Defina quando pode convocar e por quanto tempo."
   };
 }
 
@@ -337,9 +462,37 @@ function buildJourneyFromForm(
   metadata: { id: string; createdAt: string; updatedAt: string }
 ): WorkJourneyTemplate {
   const breakDuration = form.breakType === "NONE" ? undefined : toInt(form.breakDurationMinutes) ?? 0;
+  const cycleScale = isFixedCycleScale(form);
+  const dsrRestMode: "WEEKDAY" | "CYCLE" = cycleScale ? "CYCLE" : "WEEKDAY";
+  const dsrPolicySnapshot = form.dsrEnabled
+    ? {
+        enabled: true,
+        restMode: dsrRestMode,
+        description: form.dsrDescription.trim() || undefined,
+        summary: buildDsrSummaryText({
+          restMode: dsrRestMode,
+          weeklyRestDay: dsrRestMode === "WEEKDAY" ? form.dsrWeeklyRestDay : undefined,
+          cycleWorkDays: dsrRestMode === "CYCLE" ? 1 : undefined,
+          cycleOffDays: dsrRestMode === "CYCLE" ? 1 : undefined,
+          reflectOvertime: form.dsrReflectOvertime,
+          reflectNight: form.dsrReflectNight,
+          loseOnUnjustifiedAbsence: form.dsrLoseOnUnjustifiedAbsence,
+          description: form.dsrDescription.trim() || undefined
+        }),
+        weeklyRestDay: dsrRestMode === "WEEKDAY" ? form.dsrWeeklyRestDay : undefined,
+        cycleWorkDays: dsrRestMode === "CYCLE" ? 1 : undefined,
+        cycleOffDays: dsrRestMode === "CYCLE" ? 1 : undefined,
+        reflectOvertime: form.dsrReflectOvertime,
+        reflectNight: form.dsrReflectNight,
+        loseOnUnjustifiedAbsence: form.dsrLoseOnUnjustifiedAbsence
+      }
+    : undefined;
 
   if (form.type === "FIXED") {
-    const activeDays = normalizeDays(form.fixedActiveDays);
+    const activeDays =
+      form.fixedScaleType === "CUSTOM"
+        ? normalizeDays(form.fixedActiveDays)
+        : resolveFixedPresetDays(form.fixedScaleType);
     const computedDaily = computeWorkedHoursFromSchedule(
       form.fixedStartTime,
       form.fixedEndTime,
@@ -347,7 +500,10 @@ function buildJourneyFromForm(
       form.breakDurationMinutes
     );
     const dailyHours = computedDaily ?? toNum(form.fixedDailyHours) ?? 8;
-    const weeklyHours = Number((dailyHours * activeDays.length).toFixed(2));
+    const weeklyHours =
+      form.fixedScaleType === "TWELVE_THIRTY_SIX"
+        ? Number((dailyHours * 3.5).toFixed(2))
+        : Number((dailyHours * activeDays.length).toFixed(2));
 
     return {
       id: metadata.id,
@@ -360,9 +516,12 @@ function buildJourneyFromForm(
       breakDurationMinutes: breakDuration,
       maxHoursPerDay: toNum(form.fixedMaxHoursPerDay) ?? 8,
       notes: form.notes.trim() || undefined,
+      dsrPolicy: dsrPolicySnapshot,
       fixedConfig: {
-        scaleType: deriveScaleTypeFromDays(activeDays),
+        scaleType: form.fixedScaleType,
         activeDays,
+        cycleWorkDays: form.fixedScaleType === "TWELVE_THIRTY_SIX" ? 1 : undefined,
+        cycleOffDays: form.fixedScaleType === "TWELVE_THIRTY_SIX" ? 1 : undefined,
         startTime: form.fixedStartTime,
         endTime: form.fixedEndTime,
         dailyHours: Number(dailyHours.toFixed(2)),
@@ -390,6 +549,7 @@ function buildJourneyFromForm(
       breakDurationMinutes: breakDuration,
       maxHoursPerDay: toNum(form.flexMaxHoursPerDay) ?? 8,
       notes: form.notes.trim() || undefined,
+      dsrPolicy: dsrPolicySnapshot,
       flexibleConfig: {
         expectedDailyHours: explicitDaily ?? derivedDaily ?? 8,
         expectedWeeklyHours,
@@ -420,6 +580,7 @@ function buildJourneyFromForm(
     breakDurationMinutes: breakDuration,
     maxHoursPerDay: toNum(form.interMaxHoursPerDay) ?? 8,
     notes: form.notes.trim() || undefined,
+    dsrPolicy: dsrPolicySnapshot,
     intermittentConfig: {
       minHoursPerCall: toNum(form.interMinHoursPerCall) ?? 4,
       maxHoursPerCall: toNum(form.interMaxHoursPerCall) ?? 8,
@@ -434,6 +595,41 @@ function buildJourneyFromForm(
     },
     createdAt: metadata.createdAt,
     updatedAt: metadata.updatedAt
+  };
+}
+
+function buildJourneyPayloadFromForm(
+  form: JourneyFormState
+): Record<string, unknown> {
+  const snapshot = buildJourneyFromForm(
+    form,
+    {
+      id: "journey_payload",
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString()
+    }
+  );
+
+  return {
+    name: snapshot.name,
+    description: snapshot.description,
+    isActive: snapshot.isActive,
+    type: snapshot.type,
+    allowedDays: snapshot.allowedDays,
+    breakType: snapshot.breakType,
+    breakDurationMinutes: snapshot.breakDurationMinutes,
+    maxHoursPerDay: snapshot.maxHoursPerDay,
+    notes: snapshot.notes,
+    dsrEnabled: form.dsrEnabled,
+    dsrWeeklyRestDay:
+      form.dsrEnabled && !isFixedCycleScale(form) ? form.dsrWeeklyRestDay : undefined,
+    dsrReflectOvertime: form.dsrReflectOvertime,
+    dsrReflectNight: form.dsrReflectNight,
+    dsrLoseOnUnjustifiedAbsence: form.dsrLoseOnUnjustifiedAbsence,
+    dsrDescription: form.dsrEnabled ? form.dsrDescription.trim() || undefined : undefined,
+    fixedConfig: snapshot.fixedConfig,
+    flexibleConfig: snapshot.flexibleConfig,
+    intermittentConfig: snapshot.intermittentConfig
   };
 }
 
@@ -460,7 +656,7 @@ function validateForm(form: JourneyFormState): string[] {
     if (maxHoursPerDay === undefined || maxHoursPerDay <= 0 || maxHoursPerDay > 24) {
       issues.push("Limite maximo de horas por dia da jornada fixa deve estar entre 0.5 e 24.");
     }
-    if (form.fixedActiveDays.length === 0) {
+    if (form.fixedScaleType === "CUSTOM" && form.fixedActiveDays.length === 0) {
       issues.push("Selecione os dias ativos da jornada fixa.");
     }
     if (!isClock(form.fixedStartTime) || !isClock(form.fixedEndTime)) {
@@ -565,14 +761,24 @@ function validateForm(form: JourneyFormState): string[] {
     }
   }
 
+  if (form.dsrEnabled && !isFixedCycleScale(form) && !form.dsrWeeklyRestDay) {
+    issues.push("Selecione o dia principal da folga paga.");
+  }
+
   return issues;
 }
 
-function computeInlineFieldErrors(form: JourneyFormState): InlineFieldErrors {
+function computeInlineFieldErrors(
+  form: JourneyFormState
+): InlineFieldErrors {
   const errors: InlineFieldErrors = {};
 
   if (form.name.trim().length < 3) {
     errors.name = "Informe pelo menos 3 caracteres.";
+  }
+
+  if (form.dsrEnabled && !isFixedCycleScale(form) && !form.dsrWeeklyRestDay) {
+    errors.dsrWeeklyRestDay = "Dia principal de folga obrigatorio quando a folga paga estiver habilitada.";
   }
 
   if (form.breakType !== "NONE") {
@@ -583,7 +789,7 @@ function computeInlineFieldErrors(form: JourneyFormState): InlineFieldErrors {
   }
 
   if (form.type === "FIXED") {
-    if (form.fixedActiveDays.length === 0) {
+    if (form.fixedScaleType === "CUSTOM" && form.fixedActiveDays.length === 0) {
       errors.fixedActiveDays = "Selecione ao menos um dia ativo.";
     }
     if (!isClock(form.fixedStartTime)) {
@@ -666,16 +872,26 @@ function computeInlineFieldErrors(form: JourneyFormState): InlineFieldErrors {
 
 function resolveBreakSummary(form: JourneyFormState): string {
   if (form.breakType === "NONE") {
-    return "sem intervalo";
+    return "sem pausa para almoco";
   }
   const minutes = toInt(form.breakDurationMinutes) ?? 0;
-  if (form.breakType === "FLEXIBLE") {
-    return `com intervalo flexivel de no minimo ${minutes} minutos`;
+  if (form.breakType === "FIXED" && minutes === 60) {
+    return "com 1 hora de almoco";
   }
-  return `com ${minutes} minutos de intervalo`;
+  if (form.breakType === "FLEXIBLE") {
+    return `com pausa flexivel de no minimo ${minutes} minutos`;
+  }
+  return `com ${minutes} minutos de pausa`;
 }
 
 function buildJourneyPreviewText(form: JourneyFormState): string {
+  const cycleScale = isFixedCycleScale(form);
+  const folgaSummary = form.dsrEnabled
+    ? cycleScale
+      ? "Folga em ciclo: trabalha 12 horas e descansa 36 horas."
+      : resolveWeeklyRestPhrase(form.dsrWeeklyRestDay)
+    : "Sem regra de folga definida.";
+
   if (form.type === "FIXED") {
     const computedDaily = computeWorkedHoursFromSchedule(
       form.fixedStartTime,
@@ -683,22 +899,80 @@ function buildJourneyPreviewText(form: JourneyFormState): string {
       form.breakType,
       form.breakDurationMinutes
     );
-    const dayPhrase = capitalizeFirst(formatDaysForSentence(form.fixedActiveDays));
-    const daily = computedDaily !== undefined ? formatHoursValue(computedDaily) : form.fixedDailyHours || "-";
-    const weekly =
-      computedDaily !== undefined
-        ? formatHoursValue(computedDaily * normalizeDays(form.fixedActiveDays).length)
-        : form.fixedWeeklyHours || "-";
-    return `${dayPhrase}, das ${form.fixedStartTime} as ${form.fixedEndTime}, ${resolveBreakSummary(form)}. Jornada estimada de ${daily}h por dia e ${weekly}h por semana.`;
+    const activeDays =
+      form.fixedScaleType === "CUSTOM"
+        ? normalizeDays(form.fixedActiveDays)
+        : resolveFixedPresetDays(form.fixedScaleType);
+    const dayPhrase =
+      form.fixedScaleType === "TWELVE_THIRTY_SIX"
+        ? "Escala 12x36"
+        : capitalizeFirst(formatDaysForSentence(activeDays));
+    if (form.fixedScaleType === "TWELVE_THIRTY_SIX") {
+      return `${dayPhrase}: entra as ${form.fixedStartTime}, sai as ${form.fixedEndTime}, ${resolveBreakSummary(form)}. ${folgaSummary}`;
+    }
+    return `Trabalha ${formatDaysForSentence(activeDays)}, entra as ${form.fixedStartTime} e sai as ${form.fixedEndTime}, ${resolveBreakSummary(form)}. ${folgaSummary}`;
   }
 
   if (form.type === "FLEXIBLE") {
-    const dayPhrase = capitalizeFirst(formatDaysForSentence(form.flexAllowedDays));
-    return `${dayPhrase}, com entrada entre ${form.flexEntryWindowStart} e ${form.flexEntryWindowEnd} e saida entre ${form.flexExitWindowStart} e ${form.flexExitWindowEnd}. Carga esperada de ${form.flexExpectedWeeklyHours || "-"}h por semana.`;
+    return `Trabalha em horario flexivel nos dias ${formatDaysForSentence(
+      form.flexAllowedDays
+    )}, com entrada entre ${form.flexEntryWindowStart} e ${form.flexEntryWindowEnd} e saida entre ${
+      form.flexExitWindowStart
+    } e ${form.flexExitWindowEnd}. Carga esperada de ${form.flexExpectedWeeklyHours || "-"} horas por semana. ${folgaSummary}`;
   }
 
-  const dayPhrase = formatDaysForSentence(form.interCallDays);
-  return `Convocacoes permitidas de ${dayPhrase}, entre ${form.interAllowedStartTime} e ${form.interAllowedEndTime}, com duracao entre ${form.interMinHoursPerCall || "-"}h e ${form.interMaxHoursPerCall || "-"}h por convocacao.`;
+  return `Trabalho por chamada nos dias ${formatDaysForSentence(
+    form.interCallDays
+  )}, entre ${form.interAllowedStartTime} e ${form.interAllowedEndTime}, com duracao entre ${
+    form.interMinHoursPerCall || "-"
+  }h e ${form.interMaxHoursPerCall || "-"}h por convocacao. ${folgaSummary}`;
+}
+
+function resolveWeeklyRestPhrase(value: DsrWeeklyRestDay): string {
+  if (value === "MON") return "A folga principal sera na segunda-feira.";
+  if (value === "TUE") return "A folga principal sera na terca-feira.";
+  if (value === "WED") return "A folga principal sera na quarta-feira.";
+  if (value === "THU") return "A folga principal sera na quinta-feira.";
+  if (value === "FRI") return "A folga principal sera na sexta-feira.";
+  if (value === "SAT") return "A folga principal sera aos sabados.";
+  return "A folga principal sera aos domingos.";
+}
+
+function buildDsrSummaryText(policy: {
+  restMode: "WEEKDAY" | "CYCLE";
+  weeklyRestDay?: DsrWeeklyRestDay;
+  cycleWorkDays?: number;
+  cycleOffDays?: number;
+  reflectOvertime: boolean;
+  reflectNight: boolean;
+  loseOnUnjustifiedAbsence: boolean;
+  description?: string;
+}): string {
+  const details: string[] = [];
+  details.push(
+    policy.restMode === "CYCLE"
+      ? "Descanso em ciclo 12x36"
+      : `Descanso em ${resolveDsrWeeklyRestDayLabel(policy.weeklyRestDay ?? "SUN")}`
+  );
+  details.push(`Considera horas extras: ${policy.reflectOvertime ? "sim" : "nao"}`);
+  details.push(`Considera trabalho noturno: ${policy.reflectNight ? "sim" : "nao"}`);
+  if (policy.loseOnUnjustifiedAbsence) {
+    details.push("Perde por falta injustificada");
+  }
+  if (policy.description?.trim()) {
+    details.push(policy.description.trim());
+  }
+  return details.join(" | ");
+}
+
+function resolveDsrWeeklyRestDayLabel(value: DsrWeeklyRestDay): string {
+  if (value === "MON") return "segunda-feira";
+  if (value === "TUE") return "terca-feira";
+  if (value === "WED") return "quarta-feira";
+  if (value === "THU") return "quinta-feira";
+  if (value === "FRI") return "sexta-feira";
+  if (value === "SAT") return "sabado";
+  return "domingo";
 }
 
 type DayPickerProps = {
@@ -730,7 +1004,7 @@ function DayPicker({ title, selected, disabled, required, error, onToggle }: Day
               title={`${day.label} ${isSelected ? "selecionado" : "nao selecionado"}`}
             >
               <span className="journey-day-chip-check" aria-hidden="true">
-                {isSelected ? "[x]" : "[ ]"}
+                {isSelected ? "✓" : ""}
               </span>
               <span>{day.label}</span>
             </button>
@@ -761,17 +1035,17 @@ export function WorkJourneyEditorPage({ mode, journeyId }: Props) {
       return;
     }
 
-    const found = loadWorkJourneys().find((item) => item.id === journeyId);
-    if (!found) {
-      setStatusMessage("Jornada nao encontrada.");
-      setIsLoading(false);
-      return;
-    }
-
-    setLoadedJourney(found);
-    setForm(mapJourneyToForm(found));
-    setStatusMessage(null);
-    setIsLoading(false);
+    setIsLoading(true);
+    void request<WorkJourneyTemplate>(`/admin/work-journeys/${journeyId}`)
+      .then((found) => {
+        setLoadedJourney(found);
+        setForm(mapJourneyToForm(found));
+        setStatusMessage(null);
+      })
+      .catch((error) => {
+        setStatusMessage(error instanceof Error ? error.message : "Jornada nao encontrada.");
+      })
+      .finally(() => setIsLoading(false));
   }, [mode, journeyId]);
 
   useEffect(() => {
@@ -808,15 +1082,22 @@ export function WorkJourneyEditorPage({ mode, journeyId }: Props) {
     }
 
     const dailyHours = toNum(form.fixedDailyHours);
-    if (dailyHours === undefined || form.fixedActiveDays.length === 0) {
+    const activeDays =
+      form.fixedScaleType === "CUSTOM"
+        ? normalizeDays(form.fixedActiveDays)
+        : resolveFixedPresetDays(form.fixedScaleType);
+    if (dailyHours === undefined || activeDays.length === 0) {
       return;
     }
 
-    const computedWeeklyHours = formatHoursValue(dailyHours * normalizeDays(form.fixedActiveDays).length);
+    const computedWeeklyHours =
+      form.fixedScaleType === "TWELVE_THIRTY_SIX"
+        ? formatHoursValue(dailyHours * 3.5)
+        : formatHoursValue(dailyHours * activeDays.length);
     setForm((current) =>
       current.fixedWeeklyHours === computedWeeklyHours ? current : { ...current, fixedWeeklyHours: computedWeeklyHours }
     );
-  }, [form.type, form.fixedDailyHours, form.fixedActiveDays]);
+  }, [form.type, form.fixedDailyHours, form.fixedActiveDays, form.fixedScaleType]);
 
   const validationErrors = useMemo(() => validateForm(form), [form]);
   const inlineFieldErrors = useMemo(() => computeInlineFieldErrors(form), [form]);
@@ -838,7 +1119,31 @@ export function WorkJourneyEditorPage({ mode, journeyId }: Props) {
   const progress = Math.round(((activeStepIndex + 1) / wizardSteps.length) * 100);
   const journeyPreview = useMemo(() => buildJourneyPreviewText(form), [form]);
   const breakTypeHelpText = useMemo(() => getBreakTypeHelpText(form.breakType), [form.breakType]);
+  const fixedJourneyTimeline = useMemo(() => buildFixedJourneyTimeline(form), [form]);
   const showInlineErrors = submitAttempted && !isReadOnly;
+  const cltComplianceWarning = useMemo(() => {
+    let dailyHours: number | undefined;
+    let weeklyHours: number | undefined;
+
+    if (form.type === "FIXED") {
+      dailyHours = toNum(form.fixedDailyHours);
+      weeklyHours = toNum(form.fixedWeeklyHours);
+    } else if (form.type === "FLEXIBLE") {
+      weeklyHours = toNum(form.flexExpectedWeeklyHours);
+      dailyHours = toNum(form.flexExpectedDailyHours);
+      if (dailyHours === undefined) {
+        dailyHours = deriveFlexibleDailyFromWeekly(weeklyHours, form.flexAllowedDays);
+      }
+    } else {
+      dailyHours = toNum(form.interMaxHoursPerDay);
+    }
+
+    const exceededDaily = dailyHours !== undefined && dailyHours > CLT_DEFAULT_DAILY_LIMIT;
+    const exceededWeekly = weeklyHours !== undefined && weeklyHours > CLT_DEFAULT_WEEKLY_LIMIT;
+    if (!exceededDaily && !exceededWeekly) return null;
+
+    return "Atencao: Esta jornada excede o limite padrao e gerara horas extras automaticas.";
+  }, [form]);
 
   const flexDerivedDailyHint = useMemo(() => {
     if (form.type !== "FLEXIBLE") return null;
@@ -879,11 +1184,12 @@ export function WorkJourneyEditorPage({ mode, journeyId }: Props) {
               inlineFieldErrors.interAllowedWindow,
               inlineFieldErrors.interMaxHoursPerDay
             ]);
+    const specificErrorsWithDsr = unique([...specificErrors, inlineFieldErrors.dsrWeeklyRestDay]);
 
     return {
       TYPE_AND_BASIC: typeAndBasicErrors,
       GENERAL_STRUCTURE: generalStructureErrors,
-      SPECIFIC_RULES: specificErrors,
+      SPECIFIC_RULES: specificErrorsWithDsr,
       REVIEW: validationErrors
     };
   }, [inlineFieldErrors, form.type, validationErrors]);
@@ -899,6 +1205,74 @@ export function WorkJourneyEditorPage({ mode, journeyId }: Props) {
       const list = current[field];
       const next = list.includes(day) ? list.filter((item) => item !== day) : [...list, day];
       return { ...current, [field]: normalizeDays(next) };
+    });
+  }
+
+  function applyFixedScaleType(nextScaleType: FixedScaleType) {
+    if (nextScaleType === "TWELVE_THIRTY_SIX") {
+      setStatusMessage("Neste ciclo, o motorista trabalha 12h e descansa 36h consecutivas.");
+    } else if (nextScaleType === "FIVE_TWO" || nextScaleType === "SIX_ONE") {
+      setStatusMessage("Sugestao aplicada: jornada 08:00 as 17:00 e folga principal no domingo.");
+    } else {
+      setStatusMessage(null);
+    }
+    setForm((current) => {
+      if (nextScaleType === "CUSTOM") {
+        return {
+          ...current,
+          fixedScaleType: nextScaleType,
+          fixedActiveDays:
+            current.fixedActiveDays.length > 0
+              ? normalizeDays(current.fixedActiveDays)
+              : ["MON", "TUE", "WED", "THU", "FRI"]
+        };
+      }
+      if (nextScaleType === "FIVE_TWO") {
+        return {
+          ...current,
+          fixedScaleType: nextScaleType,
+          fixedActiveDays: ["MON", "TUE", "WED", "THU", "FRI"],
+          fixedStartTime: "08:00",
+          fixedEndTime: "17:00",
+          breakType: "FIXED",
+          breakDurationMinutes: "60",
+          dsrEnabled: true,
+          dsrWeeklyRestDay: "SUN",
+          fixedMaxHoursPerDay: "10"
+        };
+      }
+      if (nextScaleType === "SIX_ONE") {
+        return {
+          ...current,
+          fixedScaleType: nextScaleType,
+          fixedActiveDays: ["MON", "TUE", "WED", "THU", "FRI", "SAT"],
+          fixedStartTime: "08:00",
+          fixedEndTime: "17:00",
+          breakType: "FIXED",
+          breakDurationMinutes: "60",
+          dsrEnabled: true,
+          dsrWeeklyRestDay: "SUN",
+          fixedMaxHoursPerDay: "10"
+        };
+      }
+      if (nextScaleType === "TWELVE_THIRTY_SIX") {
+        return {
+          ...current,
+          fixedScaleType: nextScaleType,
+          fixedActiveDays: resolveFixedPresetDays(nextScaleType),
+          fixedStartTime: "07:00",
+          fixedEndTime: "19:00",
+          breakType: "FIXED",
+          breakDurationMinutes: "60",
+          dsrEnabled: true,
+          fixedMaxHoursPerDay: "12"
+        };
+      }
+      return {
+        ...current,
+        fixedScaleType: nextScaleType,
+        fixedActiveDays: resolveFixedPresetDays(nextScaleType)
+      };
     });
   }
 
@@ -978,28 +1352,17 @@ export function WorkJourneyEditorPage({ mode, journeyId }: Props) {
     setStatusMessage("Salvando jornada...");
 
     try {
-      const now = new Date().toISOString();
-      const current = loadWorkJourneys();
-
+      const payload = buildJourneyPayloadFromForm(form);
       if (mode === "edit" && journeyId) {
-        const target = current.find((item) => item.id === journeyId);
-        if (!target) {
-          throw new Error("Jornada nao encontrada para edicao.");
-        }
-
-        const updated = current.map((item) =>
-          item.id === journeyId
-            ? buildJourneyFromForm(form, { id: target.id, createdAt: target.createdAt, updatedAt: now })
-            : item
-        );
-        saveWorkJourneys(updated);
-      } else {
-        const created = buildJourneyFromForm(form, {
-          id: `journey_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`,
-          createdAt: now,
-          updatedAt: now
+        await request(`/admin/work-journeys/${journeyId}`, {
+          method: "PATCH",
+          body: JSON.stringify(payload)
         });
-        saveWorkJourneys([...current, created]);
+      } else {
+        await request("/admin/work-journeys", {
+          method: "POST",
+          body: JSON.stringify(payload)
+        });
       }
 
       router.push("/administrative/scales");
@@ -1095,7 +1458,7 @@ export function WorkJourneyEditorPage({ mode, journeyId }: Props) {
                 <div className="form-grid">
                   <label>
                     <span>
-                      Tipo de jornada<span className="journey-required">*</span>
+                      Como sera o modelo de horario?<span className="journey-required">*</span>
                     </span>
                     <select
                       className="select"
@@ -1103,9 +1466,9 @@ export function WorkJourneyEditorPage({ mode, journeyId }: Props) {
                       onChange={(event) => updateField("type", event.target.value as JourneyType)}
                       disabled={disabled}
                     >
-                      <option value="FIXED">Fixa</option>
-                      <option value="FLEXIBLE">Flexivel</option>
-                      <option value="INTERMITTENT">Intermitente</option>
+                      <option value="FIXED">Horario fixo (Ex: 08h as 17h)</option>
+                      <option value="FLEXIBLE">Horario flexivel (O motorista escolhe quando entrar)</option>
+                      <option value="INTERMITTENT">Trabalho por chamada (apenas quando solicitado)</option>
                     </select>
                   </label>
                 </div>
@@ -1179,7 +1542,7 @@ export function WorkJourneyEditorPage({ mode, journeyId }: Props) {
                 <div className="form-grid">
                   <label>
                     <span>
-                      Tipo de intervalo<span className="journey-required">*</span>
+                      Pausa para almoco e descanso<span className="journey-required">*</span>
                     </span>
                     <select
                       className="select"
@@ -1187,9 +1550,9 @@ export function WorkJourneyEditorPage({ mode, journeyId }: Props) {
                       onChange={(event) => updateField("breakType", event.target.value as BreakType)}
                       disabled={disabled}
                     >
-                      <option value="NONE">Sem intervalo</option>
-                      <option value="FIXED">Fixo</option>
-                      <option value="FLEXIBLE">Flexivel</option>
+                      <option value="NONE">Sem pausa (Trabalho direto)</option>
+                      <option value="FIXED">Tempo fixo (Ex: 1 hora de almoco todo dia)</option>
+                      <option value="FLEXIBLE">Tempo variavel (O motorista decide quando parar)</option>
                     </select>
                     <small className="helper-text">{breakTypeHelpText}</small>
                   </label>
@@ -1214,6 +1577,22 @@ export function WorkJourneyEditorPage({ mode, journeyId }: Props) {
                       {fieldError("breakDurationMinutes") ? (
                         <small className="journey-field-error">{fieldError("breakDurationMinutes")}</small>
                       ) : null}
+                      <div className="journey-break-quick-pills" role="group" aria-label="Atalhos de intervalo">
+                        {BREAK_QUICK_PRESETS.map((preset) => {
+                          const selected = String(preset.minutes) === form.breakDurationMinutes.trim();
+                          return (
+                            <button
+                              key={preset.label}
+                              type="button"
+                              className={selected ? "journey-pill is-active" : "journey-pill"}
+                              onClick={() => updateField("breakDurationMinutes", String(preset.minutes))}
+                              disabled={disabled}
+                            >
+                              {preset.label}
+                            </button>
+                          );
+                        })}
+                      </div>
                     </label>
                   ) : (
                     <div className="driver-editor-contract-inline-note">
@@ -1234,6 +1613,7 @@ export function WorkJourneyEditorPage({ mode, journeyId }: Props) {
                     />
                   </label>
                 </div>
+
               </>
             ) : null}
 
@@ -1246,14 +1626,46 @@ export function WorkJourneyEditorPage({ mode, journeyId }: Props) {
 
                 {form.type === "FIXED" ? (
               <>
-                <DayPicker
-                  title="Dias ativos"
-                  selected={form.fixedActiveDays}
-                  disabled={disabled}
-                  required
-                  error={fieldError("fixedActiveDays")}
-                  onToggle={(day) => toggleDays("fixedActiveDays", day)}
-                />
+                <div className="form-grid">
+                  <label>
+                    <span>
+                      Escala base<span className="journey-required">*</span>
+                    </span>
+                    <select
+                      className="select"
+                      value={form.fixedScaleType}
+                      onChange={(event) => applyFixedScaleType(event.target.value as FixedScaleType)}
+                      disabled={disabled}
+                    >
+                      <option value="FIVE_TWO">Padrao 5x2 (trabalha de segunda a sexta)</option>
+                      <option value="SIX_ONE">Padrao 6x1 (trabalha 6 dias e folga 1)</option>
+                      <option value="TWELVE_THIRTY_SIX">Plantao 12x36 (trabalha 12h e descansa 36h)</option>
+                      <option value="CUSTOM">Outro modelo (escolher dias manualmente)</option>
+                    </select>
+                  </label>
+                </div>
+
+                {form.fixedScaleType === "CUSTOM" ? (
+                  <DayPicker
+                    title="Dias ativos"
+                    selected={form.fixedActiveDays}
+                    disabled={disabled}
+                    required
+                    error={fieldError("fixedActiveDays")}
+                    onToggle={(day) => toggleDays("fixedActiveDays", day)}
+                  />
+                ) : (
+                  <div className="driver-editor-contract-inline-note">
+                    <strong>Dias ativos definidos pela escala</strong>
+                    <span>
+                      {form.fixedScaleType === "TWELVE_THIRTY_SIX"
+                        ? "Escala 12x36 funciona em ciclo: 12 horas de trabalho para 36 horas de descanso."
+                        : `Escala ${form.fixedScaleType === "FIVE_TWO" ? "5x2" : "6x1"} com dias: ${formatDayList(
+                            form.fixedActiveDays
+                          )}.`}
+                    </span>
+                  </div>
+                )}
 
                 <div className="form-grid">
                   <label>
@@ -1312,7 +1724,9 @@ export function WorkJourneyEditorPage({ mode, journeyId }: Props) {
                 <section className="journey-derived-block">
                   <strong className="journey-derived-title">Carga calculada automaticamente</strong>
                   <p className="helper-text">
-                    Esses valores sao derivados da hora de entrada, hora de saida, intervalo e dias ativos.
+                    {form.fixedScaleType === "TWELVE_THIRTY_SIX"
+                      ? "Esses valores sao derivados da hora de entrada, hora de saida, intervalo e ciclo 12x36."
+                      : "Esses valores sao derivados da hora de entrada, hora de saida, intervalo e dias ativos."}
                   </p>
                   <div className="form-grid journey-derived-grid">
                     <label className="journey-derived-field">
@@ -1624,6 +2038,137 @@ export function WorkJourneyEditorPage({ mode, journeyId }: Props) {
                 </div>
               </>
             ) : null}
+
+                {cltComplianceWarning ? (
+                  <div className="journey-clt-alert" role="status" aria-live="polite">
+                    <strong>Aviso de conformidade (CLT)</strong>
+                    <span>{cltComplianceWarning}</span>
+                  </div>
+                ) : null}
+
+                <section className="stack">
+                  <h3>Regra de Folga Paga</h3>
+                  <div className="form-grid">
+                    <label className="toggle-field">
+                      <span>Habilitar regra de folga paga nesta jornada?</span>
+                      <input
+                        type="checkbox"
+                        checked={form.dsrEnabled}
+                        onChange={(event) => updateField("dsrEnabled", event.target.checked)}
+                        disabled={disabled}
+                      />
+                    </label>
+                  </div>
+
+                  {form.dsrEnabled ? (
+                    <>
+                      {isFixedCycleScale(form) ? (
+                        <div className="driver-editor-contract-inline-note">
+                          <strong>Descanso por ciclo automatico</strong>
+                          <span>
+                            Para escala 12x36, a folga segue o ciclo de 12h de trabalho e 36h de descanso.
+                          </span>
+                        </div>
+                      ) : (
+                        <div className="form-grid">
+                          <label>
+                            Dia principal de folga
+                            <select
+                              className={fieldError("dsrWeeklyRestDay") ? "select journey-input-invalid" : "select"}
+                              value={form.dsrWeeklyRestDay}
+                              onChange={(event) =>
+                                updateField("dsrWeeklyRestDay", event.target.value as DsrWeeklyRestDay)
+                              }
+                              disabled={disabled}
+                            >
+                              <option value="MON">Segunda-feira</option>
+                              <option value="TUE">Terca-feira</option>
+                              <option value="WED">Quarta-feira</option>
+                              <option value="THU">Quinta-feira</option>
+                              <option value="FRI">Sexta-feira</option>
+                              <option value="SAT">Sabado</option>
+                              <option value="SUN">Domingo</option>
+                            </select>
+                            {form.type === "FIXED" &&
+                            (form.fixedScaleType === "FIVE_TWO" || form.fixedScaleType === "SIX_ONE") ? (
+                              <small className="helper-text">Sugerido para esta escala: Domingo.</small>
+                            ) : null}
+                            {fieldError("dsrWeeklyRestDay") ? (
+                              <small className="journey-field-error">{fieldError("dsrWeeklyRestDay")}</small>
+                            ) : null}
+                          </label>
+                        </div>
+                      )}
+
+                      <div className="form-grid">
+                        <label className="toggle-field">
+                          <span>A folga deve considerar o valor de horas extras?</span>
+                          <input
+                            type="checkbox"
+                            checked={form.dsrReflectOvertime}
+                            onChange={(event) =>
+                              updateField("dsrReflectOvertime", event.target.checked)
+                            }
+                            disabled={disabled}
+                          />
+                        </label>
+                        <label className="toggle-field">
+                          <span>A folga deve considerar o valor do trabalho noturno?</span>
+                          <input
+                            type="checkbox"
+                            checked={form.dsrReflectNight}
+                            onChange={(event) => updateField("dsrReflectNight", event.target.checked)}
+                            disabled={disabled}
+                          />
+                        </label>
+                      </div>
+
+                      <div className="form-grid">
+                        <label className="toggle-field">
+                          <span>Perder folga paga por falta injustificada</span>
+                          <input
+                            type="checkbox"
+                            checked={form.dsrLoseOnUnjustifiedAbsence}
+                            onChange={(event) =>
+                              updateField("dsrLoseOnUnjustifiedAbsence", event.target.checked)
+                            }
+                            disabled={disabled}
+                          />
+                        </label>
+                      </div>
+
+                      <div className="form-grid">
+                        <label>
+                          Descricao da regra de folga (opcional)
+                          <input
+                            value={form.dsrDescription}
+                            onChange={(event) => updateField("dsrDescription", event.target.value)}
+                            placeholder="Ex.: Folga aplicada por semana de apuracao."
+                            disabled={disabled}
+                          />
+                        </label>
+                      </div>
+                    </>
+                  ) : null}
+
+                  <div className="driver-editor-contract-inline-note">
+                    <strong>Resumo das regras de folga</strong>
+                    <span>
+                      {form.dsrEnabled
+                        ? buildDsrSummaryText({
+                            restMode: isFixedCycleScale(form) ? "CYCLE" : "WEEKDAY",
+                            weeklyRestDay: isFixedCycleScale(form) ? undefined : form.dsrWeeklyRestDay,
+                            cycleWorkDays: isFixedCycleScale(form) ? 1 : undefined,
+                            cycleOffDays: isFixedCycleScale(form) ? 1 : undefined,
+                            reflectOvertime: form.dsrReflectOvertime,
+                            reflectNight: form.dsrReflectNight,
+                            loseOnUnjustifiedAbsence: form.dsrLoseOnUnjustifiedAbsence,
+                            description: form.dsrDescription.trim() || undefined
+                          })
+                        : "Sem regra de folga configurada para esta jornada."}
+                    </span>
+                  </div>
+                </section>
               </>
             ) : null}
 
@@ -1645,28 +2190,87 @@ export function WorkJourneyEditorPage({ mode, journeyId }: Props) {
                   <span>{typeDescription}</span>
                 </div>
 
-                <div className="journey-summary">
-                  <strong>Resumo da jornada configurada</strong>
-                  <p>{journeyPreview}</p>
-                  <ul className="journey-summary-list">
-                    <li>
-                      <strong>Nome:</strong> {form.name.trim() || "Nao informado"}
-                    </li>
-                    <li>
-                      <strong>Status:</strong> {form.isActive ? "Ativa" : "Inativa"}
-                    </li>
-                    <li>
-                      <strong>Tipo de intervalo:</strong>{" "}
-                      {form.breakType === "NONE"
-                        ? "Sem intervalo"
-                        : form.breakType === "FIXED"
-                          ? "Intervalo fixo"
-                          : "Intervalo flexivel"}
-                    </li>
-                    <li>
-                      <strong>Regras especificas:</strong> {specificSectionMeta.description}
-                    </li>
-                  </ul>
+                <div className="journey-review-container">
+                  <div className="journey-review-main-card">
+                    <strong>Resumo Operacional</strong>
+                    <p className="journey-review-sentence">{journeyPreview}</p>
+                  </div>
+
+                  {form.type === "FIXED" && fixedJourneyTimeline ? (
+                    <div className="journey-review-timeline-card">
+                      <div className="journey-review-timeline-head">
+                        <strong>Linha do tempo da jornada (24h)</strong>
+                        <span>Veja visualmente o periodo de trabalho e o intervalo antes de salvar.</span>
+                      </div>
+                      <div className="journey-day-timeline-track" aria-label="Linha do tempo da jornada de 24 horas">
+                        {fixedJourneyTimeline.workSegments.map((segment, index) => (
+                          <span
+                            key={`work-${index}-${segment.startMinute}-${segment.endMinute}`}
+                            className="journey-day-timeline-segment is-work"
+                            style={{
+                              left: `${(segment.startMinute / 1440) * 100}%`,
+                              width: `${((segment.endMinute - segment.startMinute) / 1440) * 100}%`
+                            }}
+                          />
+                        ))}
+                        {fixedJourneyTimeline.breakSegments.map((segment, index) => (
+                          <span
+                            key={`break-${index}-${segment.startMinute}-${segment.endMinute}`}
+                            className="journey-day-timeline-segment is-break"
+                            style={{
+                              left: `${(segment.startMinute / 1440) * 100}%`,
+                              width: `${((segment.endMinute - segment.startMinute) / 1440) * 100}%`
+                            }}
+                          />
+                        ))}
+                      </div>
+                      <div className="journey-day-timeline-hours" aria-hidden="true">
+                        <span>00h</span>
+                        <span>06h</span>
+                        <span>12h</span>
+                        <span>18h</span>
+                        <span>24h</span>
+                      </div>
+                      <div className="journey-day-timeline-legend">
+                        <span>
+                          <i className="timeline-dot is-work" /> Trabalho
+                        </span>
+                        <span>
+                          <i className="timeline-dot is-break" /> Intervalo
+                        </span>
+                        <span>
+                          <i className="timeline-dot is-off" /> Folga
+                        </span>
+                      </div>
+                    </div>
+                  ) : null}
+
+                  <div className="journey-review-grid">
+                    <div className="review-item">
+                      <label className="review-item-label">Nome da jornada</label>
+                      <strong>{form.name.trim() || "Nao informado"}</strong>
+                    </div>
+                    <div className="review-item">
+                      <label className="review-item-label">Tipo de horario</label>
+                      <strong>{form.type === "FIXED" ? "Fixo" : form.type === "FLEXIBLE" ? "Flexivel" : "Intermitente"}</strong>
+                    </div>
+                    <div className="review-item">
+                      <label className="review-item-label">Pausa e intervalo</label>
+                      <strong>{form.breakType === "NONE" ? "Sem pausa" : `${form.breakDurationMinutes} min (${form.breakType === "FIXED" ? "Fixo" : "Variavel"})`}</strong>
+                    </div>
+                    <div className="review-item">
+                      <label className="review-item-label">Regra de folga paga</label>
+                      <strong>{form.dsrEnabled ? "Configurada" : "Nao configurada"}</strong>
+                    </div>
+                    {form.type === "FIXED" && (
+                      <div className="review-item">
+                        <label className="review-item-label">Carga semanal</label>
+                        <strong style={{ color: Number(form.fixedWeeklyHours) > 44 ? "#e67e22" : "inherit" }}>
+                          {form.fixedWeeklyHours}h {Number(form.fixedWeeklyHours) > 44 && " (Alerta: Acima de 44h)"}
+                        </strong>
+                      </div>
+                    )}
+                  </div>
                 </div>
               </>
             ) : null}
@@ -1731,3 +2335,4 @@ export function WorkJourneyEditorPage({ mode, journeyId }: Props) {
     </main>
   );
 }
+          

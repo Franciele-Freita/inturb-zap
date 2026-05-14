@@ -12,6 +12,7 @@ export interface DriverVehicle {
 export type DriverType = "AGREGADO" | "FROTA";
 export type FleetAssignmentMode = "FIXED" | "FLEX";
 export type DriverOperationalStatus = "ACTIVE" | "INACTIVE" | "LEAVE" | "SUSPENDED";
+export type DriverLeavePeriodType = "VACATION" | "LEAVE" | "SUSPENSION";
 export type FleetVehicleAssignmentValidationMethod = "QR_CODE" | "PLATE" | "ADMIN";
 export type DriverFleetChecklistRoutine = "START_OF_DAY" | "END_OF_DAY";
 export type DriverFleetChecklistInputType = "BOOLEAN" | "ODOMETER" | "TEXT" | "SELECT" | "NUMBER" | "PHOTO";
@@ -175,6 +176,18 @@ export interface DriverComplianceHistoryItem {
 }
 
 export interface DriverJourney {
+  dsrPolicy?: {
+    id: string;
+    name: string;
+    summary?: string;
+    restMode?: "WEEKDAY" | "CYCLE";
+    weeklyRestDay?: "MON" | "TUE" | "WED" | "THU" | "FRI" | "SAT" | "SUN";
+    cycleWorkDays?: number;
+    cycleOffDays?: number;
+    reflectOvertime: boolean;
+    reflectNight: boolean;
+    loseOnUnjustifiedAbsence: boolean;
+  };
   fixedScheduleMode?: "UNIFORM" | "PER_DAY";
   daySchedules?: Array<{
     day: "MON" | "TUE" | "WED" | "THU" | "FRI" | "SAT" | "SUN";
@@ -381,6 +394,19 @@ export interface DriverProfile {
   operationEligibility: DriverOperationalEligibility;
   operationSummary: DriverOperationalSummary;
   compensation: DriverCompensationSettings;
+  leavePeriods?: DriverLeavePeriod[];
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface DriverLeavePeriod {
+  id: string;
+  driverId: string;
+  type: DriverLeavePeriodType;
+  startDate: string;
+  endDate: string;
+  reason?: string;
+  notes?: string;
   createdAt: string;
   updatedAt: string;
 }

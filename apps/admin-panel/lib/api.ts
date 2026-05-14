@@ -120,6 +120,61 @@ export type DriverLicense = {
   expiryAlertRepeatDays?: number;
 };
 
+export type FinancialTransactionType = "EARNING" | "EXPENSE" | "PAYMENT" | "ADJUSTMENT";
+export type FinancialTransactionStatus = "PENDING" | "COMPLETED" | "CANCELLED";
+export type FinancialCategoryType = "REVENUE" | "EXPENSE" | "BOTH";
+
+export type FinancialCategory = {
+  id: string;
+  code: string;
+  name: string;
+  type: FinancialCategoryType;
+  color?: string;
+  icon?: string;
+  isActive: boolean;
+  sortOrder: number;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type FinancialTransaction = {
+  id: string;
+  driverId?: string;
+  driverName?: string;
+  vehicleId?: string;
+  vehicleLabel?: string;
+  rideId?: string;
+  type: FinancialTransactionType;
+  source?: "RIDE" | "PAYROLL" | "FLEET_MAINTENANCE" | "FLEET_REFUEL" | "MANUAL";
+  category: string;
+  categoryLabel?: string;
+  description: string;
+  amount: number;
+  occurredAt: string;
+  status: FinancialTransactionStatus;
+  referenceId?: string;
+  referencePath?: string;
+  isEditable?: boolean;
+  isReversible?: boolean;
+  metadata?: Record<string, unknown>;
+  createdAt?: string;
+};
+
+export type DriverDocument = {
+  id: string;
+  category: "IDENTIFICATION" | "CRIMINAL_RECORD" | "RESIDENCE_PROOF" | "TRAINING" | "OTHER";
+  title: string;
+  fileUrl: string;
+  fileName: string;
+  issuedAt?: string;
+  expiresAt?: string;
+  notes?: string;
+  status: "VALID" | "EXPIRED" | "PENDING_REVIEW";
+};
+
+export type DriverDocumentCategory = DriverDocument["category"];
+export type DriverDocumentStatus = DriverDocument["status"];
+
 export type DriverToxicology = {
   required: boolean;
   examNumber?: string;
@@ -378,6 +433,7 @@ export type DriverProfile = {
   address?: DriverAddress;
   driverLicense?: DriverLicense;
   toxicology?: DriverToxicology;
+  additionalDocuments?: DriverDocument[];
   complianceHistory?: DriverComplianceHistoryItem[];
   contractProfile?: DriverContractProfile;
   journey?: DriverJourney;
@@ -396,6 +452,36 @@ export type DriverProfile = {
   compensation: DriverCompensationSettings;
   createdAt: string;
   updatedAt: string;
+};
+
+export type DriverUpsertPayload = {
+  name: string;
+  cpf: string;
+  phone: string;
+  email?: string;
+  isActive: boolean;
+  password?: string;
+  photoUrl?: string;
+  birthDate?: string;
+  gender?: DriverGender;
+  bloodType?: string;
+  driverType: DriverType;
+  fleetAssignmentMode?: FleetAssignmentMode;
+  defaultFleetVehicleId?: string;
+  operationalStatus: DriverOperationalStatus;
+  operationalNotes?: string;
+  emergencyContacts?: DriverEmergencyContact[];
+  address?: DriverAddress;
+  driverLicense?: DriverLicense;
+  toxicology?: DriverToxicology;
+  additionalDocuments?: DriverDocument[];
+  complianceHistory?: DriverComplianceHistoryItem[];
+  contractProfile?: DriverContractProfile;
+  journey?: DriverJourney;
+  contract?: DriverContract;
+  compensationModel?: DriverCompensationSettings["effectiveModel"];
+  compensationValue?: number;
+  compensationNotes?: string;
 };
 
 export type FleetVehicle = {
@@ -868,6 +954,41 @@ export type OvertimeTemplate = {
   updatedAt: string;
 };
 
+export type CargoCbo = {
+  codigo: string;
+  titulo: string;
+};
+
+export type Cargo = {
+  id: string;
+  name: string;
+  description?: string;
+  department: string;
+  level: string;
+  levels: string[];
+  cbo?: CargoCbo;
+  unhealthyAllowance: "NONE" | "10" | "20" | "40";
+  hazardousAllowance: "NONE" | "30";
+  isActive: boolean;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type CargoPage = {
+  items: Cargo[];
+  page: number;
+  pageSize: number;
+  totalItems: number;
+  totalPages: number;
+};
+
+export type CargoOption = {
+  id: string;
+  name: string;
+  level: string;
+  levels: string[];
+};
+
 export type BenefitType = "FIXED" | "PERCENTAGE" | "VARIABLE" | "INFORMATIVE";
 export type BenefitFrequency = "MONTHLY" | "DAILY" | "PER_USE" | "PER_TRIP" | "ONE_TIME";
 export type BenefitApplicationMode = "PER_EMPLOYEE" | "PER_DAY_WORKED" | "PER_TRIP";
@@ -949,11 +1070,15 @@ export type WorkProfileBenefitRef = {
   summary?: string;
 };
 
+export type HolidayScopeType = "NATIONAL" | "STATE" | "CITY";
+export type DsrWeeklyRestDay = "MON" | "TUE" | "WED" | "THU" | "FRI" | "SAT" | "SUN";
+
 export type WorkProfile = {
   id: string;
   name: string;
   description?: string;
   isActive: boolean;
+  cargoId?: string;
   cargoName: string;
   cargoLevel?: string;
   contractType: WorkProfileContractType;
@@ -965,11 +1090,47 @@ export type WorkProfile = {
   overtimeTemplateId?: string;
   overtimeTemplateName?: string;
   overtimeSummary?: string;
+  usesNightPolicy: boolean;
+  nightTemplateId?: string;
+  nightTemplateName?: string;
+  nightSummary?: string;
+  holidayScopeType?: HolidayScopeType;
+  holidayStateCode?: string;
+  holidayCityCode?: string;
+  holidaySummary?: string;
   benefits: WorkProfileBenefitRef[];
   allowContractEditing: boolean;
   allowJourneyCustomization: boolean;
   allowBenefitsCustomization: boolean;
+  toleranceMarkingMinutes?: number;
+  toleranceDailyMaxMinutes?: number;
   summary: string;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type Holiday = {
+  id: string;
+  date: string;
+  name: string;
+  scopeType: HolidayScopeType;
+  stateCode?: string;
+  cityCode?: string;
+  isActive: boolean;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type DriverLeavePeriodType = "VACATION" | "LEAVE" | "SUSPENSION";
+
+export type DriverLeavePeriod = {
+  id: string;
+  driverId: string;
+  type: DriverLeavePeriodType;
+  startDate: string;
+  endDate: string;
+  reason?: string;
+  notes?: string;
   createdAt: string;
   updatedAt: string;
 };
@@ -992,8 +1153,50 @@ export type CompanyProfileConfig = {
   legalRepresentativeCpf?: string;
   legalRepresentativeRole?: string;
   contractSignatureCity?: string;
+  geofenceEnabled: boolean;
+  geofenceBaseLatitude?: number;
+  geofenceBaseLongitude?: number;
+  geofenceRadiusMeters: number;
+  toleranceMarkingMinutes: number;
+  toleranceDailyMaxMinutes: number;
+  employmentLinkages: CompanyEmploymentLinkage[];
   createdAt: string;
   updatedAt: string;
+};
+
+export type CompanyEmploymentLinkage = {
+  key: "CLT" | "CLT_INTERMITENTE" | "MEI" | "PJ" | "AUTONOMO";
+  label: string;
+  description?: string;
+  isActive: boolean;
+  sortOrder: number;
+};
+
+export type CompanyEmploymentLinkageRule = {
+  id: string;
+  linkageKey: CompanyEmploymentLinkage["key"];
+  code: string;
+  name: string;
+  description?: string;
+  isActive: boolean;
+  priority: number;
+  settings: Record<string, unknown>;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type CompanySettingsOption = {
+  value: string;
+  label: string;
+  isActive?: boolean;
+  metadata?: Record<string, unknown>;
+};
+
+export type CompanySettings = {
+  employmentLinkages: CompanyEmploymentLinkage[];
+  contractProfiles: CompanySettingsOption[];
+  departments: CompanySettingsOption[];
+  benefits: CompanySettingsOption[];
 };
 
 export type PricingRule = {
@@ -1012,6 +1215,274 @@ export type PricingRule = {
   endDate?: string;
   createdAt: string;
   updatedAt: string;
+};
+
+export type CboOccupation = {
+  id: string;
+  code: string;
+  title: string;
+  description?: string;
+  source?: string;
+  isActive: boolean;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type CboOccupationPage = {
+  items: CboOccupation[];
+  page: number;
+  pageSize: number;
+  totalItems: number;
+  totalPages: number;
+};
+
+export type CboImportResult = {
+  processed: number;
+  created: number;
+  updated: number;
+  source: string;
+  filename: string;
+};
+
+export type TimeEntryKind = "IN" | "OUT" | "BREAK_START" | "BREAK_END";
+export type TimeEntrySource = "APP" | "WEB" | "ADMIN" | "IMPORT";
+export type TimeEntryStatus = "REGISTERED" | "ADJUSTED" | "CANCELLED";
+export type TimeEntryIssueStatus = "OPEN" | "RESOLVED" | "AUTO_RESOLVED";
+export type TimeAdjustmentStatus = "PENDING" | "APPROVED" | "REJECTED";
+
+export type TimeEntry = {
+  id: string;
+  driverId: string;
+  createdByUserId?: string;
+  updatedByUserId?: string;
+  occurredAt: string;
+  kind: TimeEntryKind;
+  source: TimeEntrySource;
+  status: TimeEntryStatus;
+  timezone?: string;
+  deviceMeta?: Record<string, unknown>;
+  geo?: Record<string, unknown>;
+  notes?: string;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type TimeEntryIssue = {
+  id: string;
+  externalKey: string;
+  driverId: string;
+  date: string;
+  code: "UNEXPECTED_FIRST_ENTRY" | "INVALID_SEQUENCE" | "MISSING_BREAK_END" | "MISSING_OUT";
+  severity: "WARNING" | "ERROR";
+  status: TimeEntryIssueStatus;
+  message: string;
+  entryIds: string[];
+  resolvedAt?: string;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type TimeAdjustment = {
+  id: string;
+  driverId: string;
+  timeEntryId?: string;
+  requestedByUserId?: string;
+  updatedByUserId?: string;
+  reviewedByUserId?: string;
+  reason: string;
+  requestedKind?: TimeEntryKind;
+  requestedOccurredAt?: string;
+  requestedTimezone?: string;
+  requestedGeo?: Record<string, unknown>;
+  requestedNotes?: string;
+  originalSnapshot?: Record<string, unknown>;
+  requestedSnapshot?: Record<string, unknown>;
+  status: TimeAdjustmentStatus;
+  reviewerNote?: string;
+  reviewedAt?: string;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type TimesheetDay = {
+  id: string;
+  driverId: string;
+  date: string;
+  workProfileTemplateId?: string;
+  journeyTemplateId?: string;
+  expectedMinutes: number;
+  workedMinutes: number;
+  breakMinutes: number;
+  latenessMinutes: number;
+  earlyLeaveMinutes: number;
+  overtimeMinutes: number;
+  hasOpenIssues: boolean;
+  openIssueCount: number;
+  calculationMeta?: Record<string, unknown>;
+  calculatedAt: string;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type TimesheetPeriod = {
+  id: string;
+  driverId: string;
+  period: string;
+  expectedMinutes: number;
+  workedMinutes: number;
+  normalMinutes: number;
+  overtimeMinutes: number;
+  nightMinutes: number;
+  breakMinutes: number;
+  latenessMinutes: number;
+  earlyLeaveMinutes: number;
+  absenceDays: number;
+  workedDays: number;
+  openIssueDays: number;
+  openIssueCount: number;
+  status: "OPEN" | "CLOSED";
+  closedAt?: string;
+  reopenedAt?: string;
+  closedByUserId?: string;
+  reopenedByUserId?: string;
+  lockNote?: string;
+  rulesSnapshot?: Record<string, unknown>;
+  calculatedAt: string;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type TimekeepingDashboardDriverState =
+  | "NOT_STARTED"
+  | "IN_JOURNEY"
+  | "ON_BREAK"
+  | "FINISHED";
+
+export type TimekeepingDashboardDriver = {
+  driverId: string;
+  driverName: string;
+  state: TimekeepingDashboardDriverState;
+  delayed: boolean;
+  firstEntryAt?: string;
+  lastEntryAt?: string;
+  expectedMinutes: number;
+  workedMinutes: number;
+  breakMinutes: number;
+  overtimeMinutes: number;
+  overtimeAlertMinutes?: number;
+  overtimeAlertActive: boolean;
+  openIssueCount: number;
+};
+
+export type TimekeepingDashboard = {
+  date: string;
+  generatedAt: string;
+  totalDrivers: number;
+  inJourneyCount: number;
+  onBreakCount: number;
+  delayedCount: number;
+  overtimeAlertCount: number;
+  pendingIssueDriversCount: number;
+  notStartedCount: number;
+  finishedCount: number;
+  drivers: TimekeepingDashboardDriver[];
+};
+
+export type TimekeepingCostProjectionDriver = {
+  driverId: string;
+  driverName: string;
+  workProfileTemplateId?: string;
+  hourlyRate: number;
+  expectedMinutes: number;
+  workedMinutes: number;
+  overtimeMinutes: number;
+  nightMinutes: number;
+  overtimePercent: number;
+  nightPercent: number;
+  baseCost: number;
+  overtimeCost: number;
+  nightCost: number;
+  totalCost: number;
+  auditMemory: string[];
+};
+
+export type TimekeepingCostProjection = {
+  date: string;
+  generatedAt: string;
+  totalBaseCost: number;
+  totalOvertimeCost: number;
+  totalNightCost: number;
+  totalProjectedCost: number;
+  drivers: TimekeepingCostProjectionDriver[];
+};
+
+// DTO de relatorio/agregacao derivado de FinancialTransaction.
+export type FinancialReportEntry = {
+  id: string;
+  transactionId?: string;
+  date: string;
+  type: "REVENUE" | "COST";
+  source: "RIDE" | "PAYROLL" | "FLEET" | "MANUAL";
+  category: string;
+  categoryLabel?: string;
+  description: string;
+  amount: number;
+  referenceId?: string;
+  referencePath?: string;
+  sourceEntityLabel?: string;
+};
+
+// Compatibilidade retroativa
+export type FinancialEntry = FinancialReportEntry;
+
+export type FinancialCashflowDay = {
+  date: string;
+  revenueAmount: number;
+  payrollCostAmount: number;
+  fleetCostAmount: number;
+  totalCostAmount: number;
+  netAmount: number;
+};
+
+export type FinancialCashflow = {
+  period: string;
+  generatedAt: string;
+  totals: {
+    revenueAmount: number;
+    payrollCostAmount: number;
+    fleetCostAmount: number;
+    totalCostAmount: number;
+    netAmount: number;
+  };
+  days: FinancialCashflowDay[];
+};
+
+export type FinancialOverview = {
+  period: string;
+  generatedAt: string;
+  totals: {
+    revenueAmount: number;
+    payrollCostAmount: number;
+    fleetCostAmount: number;
+    totalCostAmount: number;
+    netAmount: number;
+  };
+  indicators: {
+    completedRides: number;
+    pendingTimekeepingIssues: number;
+    openTimesheetPeriods: number;
+    closedTimesheetPeriods: number;
+  };
+  topRevenueEntries: FinancialReportEntry[];
+  topCostEntries: FinancialReportEntry[];
+};
+
+export type FinancialEntries = {
+  period: string;
+  generatedAt: string;
+  totalRevenueAmount: number;
+  totalCostAmount: number;
+  entries: FinancialReportEntry[];
 };
 
 export type RideEvent = {
@@ -1072,6 +1543,103 @@ export type AdminAuthResponse = {
 };
 
 export type AdminProfile = AdminSessionUser;
+
+function digitsOnly(value: string): string {
+  return value.replace(/\D/g, "");
+}
+
+function isSameDigitSequence(value: string): boolean {
+  return /^(\d)\1+$/.test(value);
+}
+
+function parseDateOnly(value?: string): Date | null {
+  if (!value?.trim()) return null;
+  const parsed = new Date(`${value.trim()}T00:00:00`);
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
+}
+
+function isExpiredDate(value?: string): boolean {
+  const parsed = parseDateOnly(value);
+  if (!parsed) return false;
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  return parsed.getTime() < today.getTime();
+}
+
+export function isValidCpf(value: string): boolean {
+  const cpf = digitsOnly(value);
+  if (cpf.length !== 11 || isSameDigitSequence(cpf)) {
+    return false;
+  }
+
+  const numbers = cpf.split("").map((digit) => Number(digit));
+  const calcDigit = (length: number) => {
+    let sum = 0;
+    for (let index = 0; index < length; index += 1) {
+      sum += numbers[index] * (length + 1 - index);
+    }
+    const rest = (sum * 10) % 11;
+    return rest === 10 ? 0 : rest;
+  };
+
+  return calcDigit(9) === numbers[9] && calcDigit(10) === numbers[10];
+}
+
+export function isValidCnh(value: string): boolean {
+  const cnh = digitsOnly(value);
+  if (cnh.length !== 11 || isSameDigitSequence(cnh)) {
+    return false;
+  }
+
+  const digits = cnh.split("").map((digit) => Number(digit));
+  let firstSum = 0;
+  for (let index = 0, weight = 9; index < 9; index += 1, weight -= 1) {
+    firstSum += digits[index] * weight;
+  }
+
+  let firstDigit = firstSum % 11;
+  let discount = 0;
+  if (firstDigit >= 10) {
+    firstDigit = 0;
+    discount = 2;
+  }
+
+  let secondSum = 0;
+  for (let index = 0, weight = 1; index < 9; index += 1, weight += 1) {
+    secondSum += digits[index] * weight;
+  }
+  let secondDigit = secondSum % 11;
+  if (secondDigit >= 10) {
+    secondDigit = 0;
+  } else {
+    secondDigit -= discount;
+    if (secondDigit < 0) secondDigit += 11;
+  }
+
+  return firstDigit === digits[9] && secondDigit === digits[10];
+}
+
+export function validateDriverUpsertPayload(payload: DriverUpsertPayload): string[] {
+  const errors: string[] = [];
+
+  if (!payload.name.trim()) {
+    errors.push("Informe o nome do motorista.");
+  }
+  if (!isValidCpf(payload.cpf)) {
+    errors.push("CPF invalido.");
+  }
+  if (payload.driverLicense?.number?.trim() && !isValidCnh(payload.driverLicense.number)) {
+    errors.push("Numero da CNH invalido.");
+  }
+  if (payload.isActive && isExpiredDate(payload.driverLicense?.expirationDate)) {
+    errors.push("CNH vencida para motorista ativo.");
+  }
+  if (payload.isActive && payload.toxicology?.required && isExpiredDate(payload.toxicology.expirationDate)) {
+    errors.push("Exame toxicologico vencido para motorista ativo.");
+  }
+
+  return errors;
+}
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:3000/api";
 const GET_RESPONSE_CACHE_TTL_MS = 5000;
@@ -1176,6 +1744,142 @@ export async function request<T>(path: string, init?: RequestInit): Promise<T> {
   });
   getResponseInFlight.set(cacheKey, requestPromise);
   return requestPromise;
+}
+
+function normalizeCompanySettingsOptions(value: unknown): CompanySettingsOption[] {
+  if (!Array.isArray(value)) return [];
+  const options: CompanySettingsOption[] = [];
+
+  value.forEach((item) => {
+    if (!item || typeof item !== "object") return;
+    const raw = item as {
+      value?: unknown;
+      label?: unknown;
+      isActive?: unknown;
+      metadata?: unknown;
+    };
+    const optionValue = typeof raw.value === "string" ? raw.value.trim() : "";
+    if (!optionValue) return;
+
+    options.push({
+      value: optionValue,
+      label: typeof raw.label === "string" && raw.label.trim() ? raw.label.trim() : optionValue,
+      isActive: typeof raw.isActive === "boolean" ? raw.isActive : undefined,
+      metadata:
+        raw.metadata && typeof raw.metadata === "object"
+          ? (raw.metadata as Record<string, unknown>)
+          : undefined
+    });
+  });
+
+  return options;
+}
+
+function buildCompanySettingsFromProfile(profile: CompanyProfileConfig): CompanySettings {
+  const contractProfiles: CompanySettingsOption[] = (profile.employmentLinkages ?? []).map((item) => ({
+    value: item.key,
+    label: item.label,
+    isActive: item.isActive
+  }));
+
+  return {
+    employmentLinkages: profile.employmentLinkages ?? [],
+    contractProfiles,
+    departments: [],
+    benefits: []
+  };
+}
+
+export async function requestCompanySettings(): Promise<CompanySettings> {
+  try {
+    const raw = await request<{
+      employmentLinkages?: CompanyEmploymentLinkage[];
+      contractProfiles?: unknown;
+      departments?: unknown;
+      benefits?: unknown;
+    }>("/admin/company/settings");
+
+    const employmentLinkages = raw.employmentLinkages ?? [];
+    const contractProfiles = normalizeCompanySettingsOptions(raw.contractProfiles);
+
+    return {
+      employmentLinkages,
+      contractProfiles:
+        contractProfiles.length > 0
+          ? contractProfiles
+          : employmentLinkages.map((item) => ({
+              value: item.key,
+              label: item.label,
+              isActive: item.isActive
+            })),
+      departments: normalizeCompanySettingsOptions(raw.departments),
+      benefits: normalizeCompanySettingsOptions(raw.benefits)
+    };
+  } catch {
+    const profile = await request<CompanyProfileConfig>("/admin/company-profile");
+    return buildCompanySettingsFromProfile(profile);
+  }
+}
+
+export async function requestFormData<T>(
+  path: string,
+  formData: FormData,
+  init?: Omit<RequestInit, "body" | "headers"> & { method?: string }
+): Promise<T> {
+  const method = (init?.method ?? "POST").toUpperCase();
+  const response = await fetch(`${API_BASE_URL}${path}`, {
+    ...init,
+    method,
+    body: formData,
+    cache: "no-store",
+    credentials: "include"
+  });
+
+  if (!response.ok) {
+    if (response.status === 401 || response.status === 403) {
+      clearAdminSession();
+      getResponseCache.clear();
+    }
+
+    const text = await response.text();
+    throw new Error(parseRequestErrorMessage(text, response.status));
+  }
+
+  const payload = response.status === 204 ? (undefined as T) : ((await response.json()) as T);
+  if (method !== "GET") {
+    getResponseCache.clear();
+  }
+
+  return payload;
+}
+
+export async function requestBinary(
+  path: string,
+  init?: Omit<RequestInit, "body"> & { method?: string }
+): Promise<{ blob: Blob; fileName?: string; contentType?: string }> {
+  const method = (init?.method ?? "GET").toUpperCase();
+  const response = await fetch(`${API_BASE_URL}${path}`, {
+    ...init,
+    method,
+    cache: "no-store",
+    credentials: "include"
+  });
+
+  if (!response.ok) {
+    if (response.status === 401 || response.status === 403) {
+      clearAdminSession();
+      getResponseCache.clear();
+    }
+    const text = await response.text();
+    throw new Error(parseRequestErrorMessage(text, response.status));
+  }
+
+  const contentDisposition = response.headers.get("content-disposition") ?? "";
+  const fileNameMatch = contentDisposition.match(/filename="?([^"]+)"?/i);
+  const fileName = fileNameMatch?.[1];
+  const contentType = response.headers.get("content-type") ?? undefined;
+  const blob = await response.blob();
+  return { blob, fileName, contentType };
 }
 
 export function formatCurrency(value?: number): string {

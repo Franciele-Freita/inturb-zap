@@ -3,12 +3,12 @@
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { AdminTableRowActions } from "./admin-table-row-actions";
+import { AdministrativeListPagination } from "./administrative-list-pagination";
 import { SearchIcon } from "./icons/common-icons";
 import {
   Benefit,
   BenefitType,
   formatCurrency,
-  formatDateTime,
   request
 } from "../lib/api";
 
@@ -21,6 +21,8 @@ export function BenefitsPage() {
   const [searchTerm, setSearchTerm] = useState("");
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("ALL");
   const [typeFilter, setTypeFilter] = useState<TypeFilter>("ALL");
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState<number>(10);
   const [pendingId, setPendingId] = useState<string | null>(null);
 
   useEffect(() => {
@@ -100,6 +102,20 @@ export function BenefitsPage() {
       return matchesSearch && matchesStatus && matchesType;
     });
   }, [benefits, searchTerm, statusFilter, typeFilter]);
+  const totalPages = useMemo(
+    () => Math.max(1, Math.ceil(filteredBenefits.length / pageSize)),
+    [filteredBenefits.length, pageSize]
+  );
+  const paginatedBenefits = useMemo(() => {
+    const start = (page - 1) * pageSize;
+    return filteredBenefits.slice(start, start + pageSize);
+  }, [filteredBenefits, page, pageSize]);
+
+  useEffect(() => {
+    if (page > totalPages) {
+      setPage(totalPages);
+    }
+  }, [page, totalPages]);
 
   const activeCount = useMemo(
     () => benefits.filter((benefit) => benefit.isActive).length,
@@ -124,6 +140,7 @@ export function BenefitsPage() {
               setSearchTerm("");
               setStatusFilter("ALL");
               setTypeFilter("ALL");
+              setPage(1);
               setStatusMessage(null);
             }}
           >
@@ -150,7 +167,10 @@ export function BenefitsPage() {
               <label className="admin-header-search drivers-inline-search">
                 <input
                   value={searchTerm}
-                  onChange={(event) => setSearchTerm(event.target.value)}
+                  onChange={(event) => {
+                    setSearchTerm(event.target.value);
+                    setPage(1);
+                  }}
                   placeholder="Buscar por nome, descricao ou resumo..."
                 />
                 <span className="admin-header-search-icon" aria-hidden="true">
@@ -162,7 +182,10 @@ export function BenefitsPage() {
                   hasActiveFilters ? "select drivers-filter-toggle is-active" : "select drivers-filter-toggle"
                 }
                 value={typeFilter}
-                onChange={(event) => setTypeFilter(event.target.value as TypeFilter)}
+                onChange={(event) => {
+                  setTypeFilter(event.target.value as TypeFilter);
+                  setPage(1);
+                }}
               >
                 <option value="ALL">Todos os tipos</option>
                 <option value="FIXED">Valor fixo</option>
@@ -175,7 +198,10 @@ export function BenefitsPage() {
                   hasActiveFilters ? "select drivers-filter-toggle is-active" : "select drivers-filter-toggle"
                 }
                 value={statusFilter}
-                onChange={(event) => setStatusFilter(event.target.value as StatusFilter)}
+                onChange={(event) => {
+                  setStatusFilter(event.target.value as StatusFilter);
+                  setPage(1);
+                }}
               >
                 <option value="ALL">Todos</option>
                 <option value="ACTIVE">Ativos</option>
@@ -192,12 +218,11 @@ export function BenefitsPage() {
                   <th>Tipo e valor</th>
                   <th>Frequencia / aplicar por</th>
                   <th>Status</th>
-                  <th>Atualizacao</th>
                   <th>Acoes</th>
                 </tr>
               </thead>
               <tbody>
-                {filteredBenefits.map((benefit) => (
+                {paginatedBenefits.map((benefit) => (
                   <tr key={benefit.id}>
                     <td>
                       <div className="table-contact-cell">
@@ -214,15 +239,14 @@ export function BenefitsPage() {
                         {benefit.isActive ? "Ativo" : "Inativo"}
                       </span>
                     </td>
-                    <td>{formatDateTime(benefit.updatedAt)}</td>
                     <td>
                       <AdminTableRowActions
-                        primary={{
-                          id: `${benefit.id}_edit`,
-                          label: "Editar",
-                          href: `/administrative/benefits/${benefit.id}/edit`
-                        }}
                         items={[
+                          {
+                            id: `${benefit.id}_edit`,
+                            label: "Editar",
+                            href: `/administrative/benefits/${benefit.id}/edit`
+                          },
                           {
                             id: `${benefit.id}_view`,
                             label: "Visualizar",
@@ -255,15 +279,51 @@ export function BenefitsPage() {
             </table>
 
             {filteredBenefits.length === 0 ? (
-              <div className="empty-state">
-                <strong>Nenhum beneficio encontrado.</strong>
-                <p>Cadastre beneficios reutilizaveis para contratos e colaboradores.</p>
-                <Link href="/administrative/benefits/new" className="button-link">
-                  Criar beneficio
-                </Link>
+              <div className="administrative-list-empty-state">
+                {hasActiveFilters ? (
+                  <>
+                    <strong>Nenhum beneficio corresponde aos filtros aplicados.</strong>
+                    <p>Ajuste a busca ou limpe os filtros para visualizar os beneficios cadastrados.</p>
+                    <div className="administrative-list-empty-state-actions">
+                      <button
+                        type="button"
+                        className="button-link secondary-link"
+                        onClick={() => {
+                          setSearchTerm("");
+                          setStatusFilter("ALL");
+                          setTypeFilter("ALL");
+                          setPage(1);
+                        }}
+                      >
+                        Limpar filtros
+                      </button>
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    <strong>Nenhum beneficio encontrado.</strong>
+                    <p>Cadastre beneficios reutilizaveis para contratos e colaboradores.</p>
+                    <div className="administrative-list-empty-state-actions">
+                      <Link href="/administrative/benefits/new" className="button-link">
+                        Criar beneficio
+                      </Link>
+                    </div>
+                  </>
+                )}
               </div>
             ) : null}
           </div>
+          <AdministrativeListPagination
+            page={page}
+            pageSize={pageSize}
+            totalItems={filteredBenefits.length}
+            label="Paginacao da tabela de beneficios"
+            onPageChange={setPage}
+            onPageSizeChange={(value) => {
+              setPageSize(value);
+              setPage(1);
+            }}
+          />
         </article>
       </section>
     </main>

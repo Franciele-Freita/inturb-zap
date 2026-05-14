@@ -1,5 +1,18 @@
 import Link from "next/link";
-import { DriverProfile, DriverVehicle, formatCurrency, formatDateTime } from "../lib/api";
+import { useEffect, useMemo, useState } from "react";
+import {
+  FinancialCategory,
+  DriverProfile,
+  DriverVehicle,
+  FinancialTransaction,
+  formatCurrency,
+  formatDateTime,
+  request
+} from "../lib/api";
+import { buildDriverBalanceTimeline, calculateDriverStatementTotals } from "../lib/financial-service";
+import { validateFinancialReason, validateFinancialTransactionEditDraft } from "../lib/financial-validation";
+import { DriverProfileEditorModal } from "./driver-profile-editor-modal";
+import { FinancialActionModal } from "./financial-action-modal";
 
 export type DriverWorkspaceTab = "overview" | "operacao" | "financeiro" | "veiculos" | "historico";
 
@@ -448,6 +461,169 @@ function OperationTab({ driver, activeOwnVehicle }: { driver: DriverProfile; act
 }
 
 function FinanceTab({ driver }: { driver: DriverProfile }) {
+  const pageSize = 20;
+  const [periodKey, setPeriodKey] = useState(currentMonthKey());
+  const [typeFilter, setTypeFilter] = useState<"ALL" | "EARNING" | "PAYMENT" | "ADJUSTMENT" | "EXPENSE">("ALL");
+  const [searchTerm, setSearchTerm] = useState("");
+  const [transactions, setTransactions] = useState<FinancialTransaction[]>([]);
+  const [categories, setCategories] = useState<FinancialCategory[]>([]);
+  const [offset, setOffset] = useState(0);
+  const [hasMore, setHasMore] = useState(true);
+  const [isLoading, setIsLoading] = useState(false);
+  const [isLoadingMore, setIsLoadingMore] = useState(false);
+  const [feedback, setFeedback] = useState<string | null>(null);
+  const [selectedTransactionId, setSelectedTransactionId] = useState<string | null>(null);
+  const [editingTransactionId, setEditingTransactionId] = useState<string | null>(null);
+  const [editDescription, setEditDescription] = useState("");
+  const [editCategory, setEditCategory] = useState("");
+  const [editAmount, setEditAmount] = useState("");
+  const [editNotes, setEditNotes] = useState("");
+  const [isSavingEdit, setIsSavingEdit] = useState(false);
+  const [isReversingId, setIsReversingId] = useState<string | null>(null);
+  const [reverseTarget, setReverseTarget] = useState<FinancialTransaction | null>(null);
+  const [reverseReasonError, setReverseReasonError] = useState<string | null>(null);
+
+  useEffect(() => {
+    void request<FinancialCategory[]>("/admin/financial/categories")
+      .then(setCategories)
+      .catch(() => undefined);
+  }, []);
+
+  useEffect(() => {
+    void loadTransactions({ reset: true });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [driver.id, periodKey, typeFilter, searchTerm]);
+
+  async function loadTransactions(input: { reset: boolean }) {
+    const currentOffset = input.reset ? 0 : offset;
+    if (input.reset) {
+      setIsLoading(true);
+    } else {
+      setIsLoadingMore(true);
+    }
+    setFeedback(null);
+
+    const query = new URLSearchParams();
+    query.set("period", periodKey);
+    query.set("driverId", driver.id);
+    query.set("status", "COMPLETED");
+    query.set("limit", String(pageSize));
+    query.set("offset", String(currentOffset));
+    if (typeFilter !== "ALL") {
+      query.set("type", typeFilter);
+    }
+    if (searchTerm.trim().length > 0) {
+      query.set("search", searchTerm.trim());
+    }
+
+    try {
+      const chunk = await request<FinancialTransaction[]>(`/admin/financial/transactions?${query.toString()}`);
+      setTransactions((current) => (input.reset ? chunk : [...current, ...chunk]));
+      setOffset(currentOffset + chunk.length);
+      setHasMore(chunk.length === pageSize);
+    } catch (error) {
+      setFeedback(error instanceof Error ? error.message : "Falha ao carregar extrato financeiro.");
+    } finally {
+      setIsLoading(false);
+      setIsLoadingMore(false);
+    }
+  }
+
+  const selectedTransaction =
+    transactions.find((transaction) => transaction.id === selectedTransactionId) ?? null;
+  const editingTransaction =
+    transactions.find((transaction) => transaction.id === editingTransactionId) ?? null;
+
+  const totals = useMemo(() => calculateDriverStatementTotals(transactions), [transactions]);
+
+  const balanceTimeline = useMemo(() => buildDriverBalanceTimeline(transactions), [transactions]);
+
+  function openEditModal(transaction: FinancialTransaction) {
+    setEditingTransactionId(transaction.id);
+    setEditDescription(transaction.description);
+    setEditCategory(transaction.category);
+    setEditAmount(transaction.amount.toString().replace(".", ","));
+    setEditNotes(
+      typeof transaction.metadata?.notes === "string" ? transaction.metadata.notes : ""
+    );
+  }
+
+  async function handleSaveEdit() {
+    if (!editingTransaction) return;
+    const validation = validateFinancialTransactionEditDraft({
+      description: editDescription,
+      category: editCategory,
+      amount: editAmount,
+      notes: editNotes
+    });
+    if (!validation.ok) {
+      setFeedback(validation.errors.join(" "));
+      return;
+    }
+
+    setIsSavingEdit(true);
+    setFeedback(null);
+    try {
+      await request<FinancialTransaction>(
+        `/admin/financial/transactions/${encodeURIComponent(editingTransaction.id)}`,
+        {
+          method: "PATCH",
+          body: JSON.stringify({
+            ...validation.value
+          })
+        }
+      );
+      setEditingTransactionId(null);
+      await loadTransactions({ reset: true });
+      setFeedback("Transacao atualizada com sucesso.");
+    } catch (error) {
+      setFeedback(error instanceof Error ? error.message : "Falha ao atualizar transacao.");
+    } finally {
+      setIsSavingEdit(false);
+    }
+  }
+
+  function openReverseModal(transaction: FinancialTransaction) {
+    setReverseTarget(transaction);
+    setReverseReasonError(null);
+  }
+
+  async function handleReverseTransaction(reasonInput: string) {
+    if (!reverseTarget) {
+      return;
+    }
+    const reasonValidation = validateFinancialReason(reasonInput, {
+      required: false,
+      fieldLabel: "o motivo do estorno",
+      maxLength: 220
+    });
+    if (!reasonValidation.ok) {
+      setReverseReasonError(reasonValidation.errors[0]);
+      return;
+    }
+
+    const reason = reasonValidation.value;
+    setIsReversingId(reverseTarget.id);
+    setFeedback(null);
+    setReverseReasonError(null);
+    try {
+      await request<FinancialTransaction>(
+        `/admin/financial/transactions/${encodeURIComponent(reverseTarget.id)}/reverse`,
+        {
+          method: "POST",
+          body: JSON.stringify({ reason: reason || undefined })
+        }
+      );
+      await loadTransactions({ reset: true });
+      setFeedback("Estorno registrado com sucesso.");
+      setReverseTarget(null);
+    } catch (error) {
+      setFeedback(error instanceof Error ? error.message : "Falha ao estornar transacao.");
+    } finally {
+      setIsReversingId(null);
+    }
+  }
+
   return (
     <div className="overview-grid driver-workspace-overview-grid">
       <article className="panel driver-workspace-detail-card driver-workspace-domain-card">
@@ -462,18 +638,250 @@ function FinanceTab({ driver }: { driver: DriverProfile }) {
           <div className="driver-workspace-domain-item"><span>Modelo</span><strong>{resolveCompensationModel(driver)}</strong><small>{resolveCompensationLabel(driver)}</small></div>
           <div className="driver-workspace-domain-item"><span>Origem</span><strong>Template/Personalizada</strong><small>Regra aplicada diretamente ao motorista.</small></div>
           <div className="driver-workspace-domain-item"><span>Status</span><strong>{driver.compensation.effectiveIsActive ? "Ativo" : "Inativo"}</strong><small>Regra aplicada no fechamento operacional.</small></div>
+          <div className="driver-workspace-domain-item"><span>Observacao de remuneracao</span><strong>{driver.compensation.customNotes?.trim() || "Sem observacoes adicionais"}</strong><small>Campo institucional da regra de repasse (nao substitui extrato).</small></div>
         </div>
       </article>
 
-      <article className="panel driver-workspace-note-card">
+      <article className="panel panel-wide driver-workspace-detail-card">
         <div className="panel-head">
-          <h2>Notas financeiras</h2>
-          <span>Observacoes para governanca e acompanhamento.</span>
+          <h2>Extrato de transacoes</h2>
+          <span>Movimentacao financeira consolidada para este motorista.</span>
         </div>
-        <div className="driver-workspace-rich-copy">
-          <p>{driver.compensation.customNotes?.trim() || "Sem observacoes financeiras registradas."}</p>
+        <div className="financial-filter-grid" style={{ marginBottom: "1rem" }}>
+          <label>
+            Competencia
+            <input type="month" value={periodKey} onChange={(event) => setPeriodKey(event.target.value)} />
+          </label>
+          <label>
+            Tipo de transacao
+            <select className="select" value={typeFilter} onChange={(event) => setTypeFilter(event.target.value as "ALL" | "EARNING" | "PAYMENT" | "ADJUSTMENT" | "EXPENSE")}>
+              <option value="ALL">Todos</option>
+              <option value="EARNING">Ganhos</option>
+              <option value="PAYMENT">Pagamentos</option>
+              <option value="EXPENSE">Despesas</option>
+              <option value="ADJUSTMENT">Ajustes</option>
+            </select>
+          </label>
+          <label>
+            Buscar por descricao/referencia
+            <input
+              value={searchTerm}
+              onChange={(event) => setSearchTerm(event.target.value)}
+              placeholder="Ex.: corrida, ajuste, 123..."
+            />
+          </label>
+        </div>
+
+        <div className="financial-cards-grid" style={{ marginBottom: "1rem" }}>
+          <article className="panel financial-card">
+            <span>Ganhos</span>
+            <strong>{formatCurrency(totals.earning)}</strong>
+          </article>
+          <article className="panel financial-card">
+            <span>Custos/Pagamentos</span>
+            <strong>{formatCurrency(totals.cost)}</strong>
+          </article>
+          <article className="panel financial-card">
+            <span>Ajustes</span>
+            <strong>{formatCurrency(totals.adjustment)}</strong>
+          </article>
+          <article className="panel financial-card">
+            <span>Saldo do periodo</span>
+            <strong>{formatCurrency(totals.balance)}</strong>
+          </article>
+        </div>
+
+        <DriverBalanceLineChart points={balanceTimeline} />
+
+        {feedback ? <p className="journey-list-status-message">{feedback}</p> : null}
+        {isLoading ? <p className="helper-text">Atualizando extrato...</p> : null}
+        <div className="driver-workspace-list">
+          <table className="overtime-table">
+            <thead>
+              <tr>
+                <th>Data</th>
+                <th>Descricao</th>
+                <th>Categoria</th>
+                <th>Tipo</th>
+                <th className="text-right">Valor</th>
+                <th>Acoes</th>
+              </tr>
+            </thead>
+            <tbody>
+              {transactions.length === 0 ? (
+                <tr className="overtime-row">
+                  <td colSpan={6}>Nenhuma transacao encontrada para os filtros selecionados.</td>
+                </tr>
+              ) : (
+                transactions.map((transaction) => (
+                  <tr
+                    key={transaction.id}
+                    className="overtime-row finance-clickable-row"
+                    onClick={() => setSelectedTransactionId(transaction.id)}
+                  >
+                    <td>{new Date(transaction.occurredAt).toLocaleDateString("pt-BR")}</td>
+                    <td>{transaction.description}</td>
+                    <td>{transaction.categoryLabel ?? transaction.category}</td>
+                    <td>
+                      <span className={`status-pill ${transaction.type === "EARNING" ? "status-pill-success" : ""}`}>
+                        {formatDriverTransactionType(transaction.type)}
+                      </span>
+                    </td>
+                    <td className="text-right">
+                      <strong>{formatCurrency(transaction.amount)}</strong>
+                    </td>
+                    <td onClick={(event) => event.stopPropagation()}>
+                      <details className="table-actions-menu">
+                        <summary className="table-actions-menu-trigger">...</summary>
+                        <div className="table-actions-menu-list">
+                          <button
+                            type="button"
+                            className="table-actions-menu-item"
+                            onClick={() => openEditModal(transaction)}
+                            disabled={!transaction.isEditable}
+                          >
+                            Editar
+                          </button>
+                          <button
+                            type="button"
+                            className="table-actions-menu-item is-danger"
+                            onClick={() => openReverseModal(transaction)}
+                            disabled={!transaction.isReversible || isReversingId === transaction.id}
+                          >
+                            {isReversingId === transaction.id ? "Estornando..." : "Estornar"}
+                          </button>
+                        </div>
+                      </details>
+                    </td>
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
+          {hasMore ? (
+            <div className="financial-filter-actions" style={{ marginTop: "0.9rem" }}>
+              <button type="button" className="secondary" onClick={() => void loadTransactions({ reset: false })} disabled={isLoadingMore || isLoading}>
+                {isLoadingMore ? "Carregando..." : "Carregar mais"}
+              </button>
+            </div>
+          ) : null}
         </div>
       </article>
+
+      <DriverProfileEditorModal
+        open={selectedTransaction !== null}
+        onClose={() => setSelectedTransactionId(null)}
+        title="Detalhes da transacao"
+        description={
+          selectedTransaction
+            ? `${new Date(selectedTransaction.occurredAt).toLocaleString("pt-BR")} | ${selectedTransaction.categoryLabel ?? selectedTransaction.category}`
+            : undefined
+        }
+      >
+        {selectedTransaction ? (
+          <div className="driver-workspace-keyvalue">
+            <div>
+              <span>Descricao</span>
+              <strong>{selectedTransaction.description}</strong>
+            </div>
+            <div>
+              <span>Tipo</span>
+              <strong>{formatDriverTransactionType(selectedTransaction.type)}</strong>
+            </div>
+            <div>
+              <span>Status</span>
+              <strong>{formatDriverTransactionStatus(selectedTransaction.status)}</strong>
+            </div>
+            <div>
+              <span>Origem</span>
+              <strong>{formatDriverTransactionSource(selectedTransaction.source)}</strong>
+            </div>
+            <div>
+              <span>Categoria</span>
+              <strong>{selectedTransaction.categoryLabel ?? selectedTransaction.category}</strong>
+            </div>
+            <div>
+              <span>Valor</span>
+              <strong>{formatCurrency(selectedTransaction.amount)}</strong>
+            </div>
+            <div>
+              <span>Referencia</span>
+              <strong>{selectedTransaction.referenceId ?? "-"}</strong>
+            </div>
+            {selectedTransaction.referencePath ? (
+              <div>
+                <span>Origem detalhada</span>
+                <strong>
+                  <Link href={selectedTransaction.referencePath}>Abrir detalhe</Link>
+                </strong>
+              </div>
+            ) : null}
+          </div>
+        ) : null}
+      </DriverProfileEditorModal>
+
+      <DriverProfileEditorModal
+        open={editingTransaction !== null}
+        onClose={() => setEditingTransactionId(null)}
+        title="Editar transacao manual"
+        description={editingTransaction ? `Transacao ${editingTransaction.id}` : undefined}
+      >
+        {editingTransaction ? (
+          <div className="driver-workspace-keyvalue">
+            <label>
+              <span>Descricao</span>
+              <input value={editDescription} onChange={(event) => setEditDescription(event.target.value)} />
+            </label>
+            <label>
+              <span>Categoria</span>
+              <select className="select" value={editCategory} onChange={(event) => setEditCategory(event.target.value)}>
+                {categories.map((category) => (
+                  <option key={category.id} value={category.code}>
+                    {category.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label>
+              <span>Valor</span>
+              <input value={editAmount} onChange={(event) => setEditAmount(event.target.value)} />
+            </label>
+            <label>
+              <span>Observacoes</span>
+              <textarea value={editNotes} onChange={(event) => setEditNotes(event.target.value)} />
+            </label>
+            <div className="timekeeping-adjustments-actions-row">
+              <button type="button" className="secondary" onClick={() => setEditingTransactionId(null)}>
+                Cancelar
+              </button>
+              <button type="button" onClick={() => void handleSaveEdit()} disabled={isSavingEdit}>
+                {isSavingEdit ? "Salvando..." : "Salvar alteracoes"}
+              </button>
+            </div>
+          </div>
+        ) : null}
+      </DriverProfileEditorModal>
+
+      <FinancialActionModal
+        open={reverseTarget !== null}
+        onClose={() => {
+          if (isReversingId) return;
+          setReverseTarget(null);
+          setReverseReasonError(null);
+        }}
+        title="Estornar transacao"
+        description={
+          reverseTarget
+            ? `${reverseTarget.description} | ${formatCurrency(reverseTarget.amount)}`
+            : "Informe a justificativa do estorno."
+        }
+        confirmLabel="Confirmar estorno"
+        justificationRequired={false}
+        defaultJustification="Estorno administrativo."
+        errorMessage={reverseReasonError}
+        isSubmitting={Boolean(isReversingId)}
+        onConfirm={(justification) => void handleReverseTransaction(justification)}
+      />
     </div>
   );
 }
@@ -673,6 +1081,75 @@ function resolveCompensationLabel(driver: DriverProfile) {
   if (mode === "SALARY") return `${formatCurrency(value)} por mes`;
   if (mode === "INTERMITTENT") return value > 0 ? `${formatCurrency(value)} intermitente` : "Intermitente";
   return value > 0 ? `${formatCurrency(value)} personalizado` : "Personalizado";
+}
+
+function currentMonthKey(): string {
+  return new Date().toISOString().slice(0, 7);
+}
+
+function formatDriverTransactionType(type: FinancialTransaction["type"]): string {
+  if (type === "EARNING") return "Ganho";
+  if (type === "PAYMENT") return "Pagamento";
+  if (type === "ADJUSTMENT") return "Ajuste";
+  return "Despesa";
+}
+
+function formatDriverTransactionStatus(status: FinancialTransaction["status"]): string {
+  if (status === "PENDING") return "Pendente";
+  if (status === "CANCELLED") return "Cancelada";
+  return "Concluida";
+}
+
+function formatDriverTransactionSource(source: FinancialTransaction["source"]): string {
+  if (source === "RIDE") return "Corrida";
+  if (source === "PAYROLL") return "Folha";
+  if (source === "FLEET_MAINTENANCE") return "Frota (manutencao)";
+  if (source === "FLEET_REFUEL") return "Frota (abastecimento)";
+  if (source === "MANUAL") return "Manual";
+  return "-";
+}
+
+function DriverBalanceLineChart({ points }: { points: Array<{ date: string; balance: number }> }) {
+  if (points.length === 0) {
+    return <p className="helper-text">Sem dados para evolucao de saldo no periodo.</p>;
+  }
+
+  const width = 680;
+  const height = 180;
+  const padding = 20;
+  const polyline = mapDriverLine(points.map((item) => item.balance), width, height, padding);
+
+  return (
+    <div className="finance-mini-line-chart" style={{ marginBottom: "1rem" }}>
+      <svg viewBox={`0 0 ${width} ${height}`} role="img" aria-label="Evolucao de saldo do motorista">
+        <polyline className="line line-net" points={polyline} />
+      </svg>
+      <div className="finance-mini-line-legend">
+        <span>
+          <i className="dot dot-net" /> Saldo acumulado
+        </span>
+      </div>
+    </div>
+  );
+}
+
+function mapDriverLine(values: number[], width: number, height: number, padding: number): string {
+  if (values.length === 0) return "";
+  const minValue = Math.min(...values);
+  const maxValue = Math.max(...values);
+  const span = Math.max(1, maxValue - minValue);
+
+  return values
+    .map((value, index) => {
+      const x =
+        values.length === 1
+          ? width / 2
+          : padding + (index * (width - padding * 2)) / (values.length - 1);
+      const normalized = (value - minValue) / span;
+      const y = height - padding - normalized * (height - padding * 2);
+      return `${x.toFixed(2)},${y.toFixed(2)}`;
+    })
+    .join(" ");
 }
 
 function resolveGenderLabel(gender?: DriverProfile["gender"]) {

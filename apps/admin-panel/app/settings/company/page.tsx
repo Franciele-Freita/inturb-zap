@@ -20,6 +20,10 @@ type CompanyProfileFormState = {
   legalRepresentativeCpf: string;
   legalRepresentativeRole: string;
   contractSignatureCity: string;
+  geofenceEnabled: boolean;
+  geofenceBaseLatitude: string;
+  geofenceBaseLongitude: string;
+  geofenceRadiusMeters: string;
   updatedAt?: string;
 };
 
@@ -40,6 +44,10 @@ const initialCompanyProfileForm: CompanyProfileFormState = {
   legalRepresentativeCpf: "",
   legalRepresentativeRole: "",
   contractSignatureCity: "",
+  geofenceEnabled: false,
+  geofenceBaseLatitude: "",
+  geofenceBaseLongitude: "",
+  geofenceRadiusMeters: "150",
   updatedAt: undefined
 };
 
@@ -172,7 +180,14 @@ export default function CompanySettingsPage() {
       legalRepresentativeName: form.legalRepresentativeName.trim(),
       legalRepresentativeCpf: formatCpfInput(form.legalRepresentativeCpf),
       legalRepresentativeRole: form.legalRepresentativeRole.trim(),
-      contractSignatureCity: form.contractSignatureCity.trim()
+      contractSignatureCity: form.contractSignatureCity.trim(),
+      geofenceEnabled: form.geofenceEnabled,
+      geofenceBaseLatitude:
+        form.geofenceBaseLatitude.trim().length > 0 ? Number(form.geofenceBaseLatitude) : undefined,
+      geofenceBaseLongitude:
+        form.geofenceBaseLongitude.trim().length > 0 ? Number(form.geofenceBaseLongitude) : undefined,
+      geofenceRadiusMeters:
+        form.geofenceRadiusMeters.trim().length > 0 ? Number(form.geofenceRadiusMeters) : undefined
     };
 
     setIsSavingProfile(true);
@@ -196,7 +211,7 @@ export default function CompanySettingsPage() {
         <div className="driver-list-topbar-copy">
           <div className="driver-list-topbar-header">
             <div className="driver-list-topbar-heading">
-              <p className="eyebrow">Configuracoes</p>
+              <p className="eyebrow">Dados da empresa</p>
               <h1>Dados da Empresa</h1>
               <p className="drivers-page-status">
                 Cadastre as informacoes institucionais da Inturb para contratos, documentos e operacoes internas.
@@ -425,6 +440,59 @@ export default function CompanySettingsPage() {
                 </label>
               </div>
             </section>
+
+            <section className="company-settings-section">
+              <div className="company-settings-section-head">
+                <span className="company-settings-section-index">04</span>
+                <div className="company-settings-section-copy">
+                  <h2>Cerca de ponto (Geofence)</h2>
+                  <p>Define a base para classificar batidas como dentro ou fora da area permitida.</p>
+                </div>
+              </div>
+              <div className="form-grid">
+                <label>
+                  Habilitar cerca da base
+                  <select
+                    value={form.geofenceEnabled ? "yes" : "no"}
+                    onChange={(event) => updateField("geofenceEnabled", event.target.value === "yes")}
+                  >
+                    <option value="no">Nao</option>
+                    <option value="yes">Sim</option>
+                  </select>
+                </label>
+                <label>
+                  Raio da cerca (m)
+                  <input
+                    value={form.geofenceRadiusMeters}
+                    onChange={(event) =>
+                      updateField("geofenceRadiusMeters", event.target.value.replace(/[^\d]/g, "").slice(0, 4))
+                    }
+                    placeholder="150"
+                    inputMode="numeric"
+                  />
+                </label>
+              </div>
+              <div className="form-grid">
+                <label>
+                  Latitude da base
+                  <input
+                    value={form.geofenceBaseLatitude}
+                    onChange={(event) => updateField("geofenceBaseLatitude", event.target.value)}
+                    placeholder="-20.315500"
+                    inputMode="decimal"
+                  />
+                </label>
+                <label>
+                  Longitude da base
+                  <input
+                    value={form.geofenceBaseLongitude}
+                    onChange={(event) => updateField("geofenceBaseLongitude", event.target.value)}
+                    placeholder="-40.312800"
+                    inputMode="decimal"
+                  />
+                </label>
+              </div>
+            </section>
           </div>
 
           <div className="driver-contract-actions company-settings-actions">
@@ -526,6 +594,13 @@ function toCompanyProfileFormState(value: CompanyProfileConfig): CompanyProfileF
     legalRepresentativeCpf: value.legalRepresentativeCpf ?? "",
     legalRepresentativeRole: value.legalRepresentativeRole ?? "",
     contractSignatureCity: value.contractSignatureCity ?? "",
+    geofenceEnabled: value.geofenceEnabled ?? false,
+    geofenceBaseLatitude:
+      value.geofenceBaseLatitude === undefined ? "" : String(value.geofenceBaseLatitude),
+    geofenceBaseLongitude:
+      value.geofenceBaseLongitude === undefined ? "" : String(value.geofenceBaseLongitude),
+    geofenceRadiusMeters:
+      value.geofenceRadiusMeters === undefined ? "150" : String(value.geofenceRadiusMeters),
     updatedAt: value.updatedAt
   };
 }

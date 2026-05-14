@@ -138,6 +138,21 @@ export function FleetSectionsPage({ activeTab }: FleetSectionsPageProps) {
     () => fleetVehicles.filter((vehicle) => vehicle.status === "MAINTENANCE").length,
     [fleetVehicles]
   );
+  const inactiveVehicleCount = useMemo(
+    () => fleetVehicles.filter((vehicle) => vehicle.status === "INACTIVE").length,
+    [fleetVehicles]
+  );
+  const vehiclesWithAlertsCount = useMemo(
+    () => fleetVehicles.filter((vehicle) => vehicle.alerts.length > 0).length,
+    [fleetVehicles]
+  );
+  const checklistPendingVehicleCount = useMemo(
+    () =>
+      fleetVehicles.filter(
+        (vehicle) => vehicle.checklistProgress.required && !vehicle.checklistProgress.isComplete
+      ).length,
+    [fleetVehicles]
+  );
   const vehicleAttentionCount = useMemo(
     () =>
       fleetVehicles.filter(
@@ -165,7 +180,6 @@ export function FleetSectionsPage({ activeTab }: FleetSectionsPageProps) {
     [fleetVehicles]
   );
 
-  const hasActiveFilters = statusFilter !== "ALL" || alertFilter !== "ALL";
   const maintenancePlanItems = maintenanceOverview?.plans ?? [];
   const maintenanceOpenItems = maintenanceOverview?.openTasks ?? [];
   const maintenanceOverdueItems = maintenanceOverview?.overdueTasks ?? [];
@@ -402,13 +416,11 @@ export function FleetSectionsPage({ activeTab }: FleetSectionsPageProps) {
 
   const topbarActions =
     activeTab === "VEHICLES" ? (
-      <div className="fleet-module-hero-actions">
-        <Link href="/fleet/veiculos/novo" className="button-link">
-          + Novo veiculo
-        </Link>
-      </div>
+      <Link href="/fleet/veiculos/novo" className="button-link">
+        + Novo veiculo
+      </Link>
     ) : activeTab === "MAINTENANCE" ? (
-      <div className="fleet-module-hero-actions">
+      <>
         <Link
           href="/fleet/manutencao/planos/novo"
           className="button-link"
@@ -430,13 +442,11 @@ export function FleetSectionsPage({ activeTab }: FleetSectionsPageProps) {
         >
           + Registrar km
         </Link>
-      </div>
+      </>
     ) : activeTab === "CHECKLISTS" ? (
-      <div className="fleet-module-hero-actions">
-        <Link href="/fleet/checklists/nova" className="button-link">
-          + Nova lista
-        </Link>
-      </div>
+      <Link href="/fleet/checklists/nova" className="button-link">
+        + Nova lista
+      </Link>
     ) : null;
 
   const heroMeta =
@@ -494,13 +504,10 @@ export function FleetSectionsPage({ activeTab }: FleetSectionsPageProps) {
   const summaryCards =
     activeTab === "VEHICLES"
       ? [
-          { label: "Todos", value: 0, meta: "Base total de veiculos." },
-          { label: "Ativos", value: 0, meta: "Veiculos liberados para uso." },
-          { label: "Manutencao", value: 0, meta: "Veiculos em manutencao." },
-          { label: "Limpeza", value: 0, meta: "Veiculos em higienizacao." },
-          { label: "Sinistro", value: 0, meta: "Veiculos com sinistro." },
-          { label: "Inativo", value: 0, meta: "Veiculos fora de operacao." },
-          { label: "Venda", value: 0, meta: "Veiculos destinados a venda." }
+          { label: "Total", value: overview?.total ?? fleetVehicles.length, meta: "Base total de veiculos." },
+          { label: "Disponiveis", value: overview?.available ?? availableVehicleCount, meta: "Prontos para rodar." },
+          { label: "Manutencao", value: overview?.maintenance ?? maintenanceVehicleCount, meta: "Em manutencao ativa." },
+          { label: "Inativos", value: overview?.inactive ?? inactiveVehicleCount, meta: "Fora da operacao." }
         ]
       : activeTab === "MAINTENANCE"
         ? [
@@ -526,21 +533,68 @@ export function FleetSectionsPage({ activeTab }: FleetSectionsPageProps) {
   const hasVehicleSearch = searchTerm.trim().length > 0;
   const hasVehicleViewFilters = statusFilter !== "ALL" || alertFilter !== "ALL" || hasVehicleSearch;
   const vehicleStatusIndicators = [
-    { key: "ALL", label: "Todos", value: 0, description: "Base total de veiculos." },
-    { key: "ACTIVE", label: "Ativos", value: 0, description: "Veiculos liberados para uso." },
-    { key: "MAINTENANCE", label: "Manutencao", value: 0, description: "Veiculos em manutencao." },
-    { key: "CLEANING", label: "Limpeza", value: 0, description: "Veiculos em higienizacao." },
-    { key: "INCIDENT", label: "Sinistro", value: 0, description: "Veiculos com sinistro." },
-    { key: "INACTIVE", label: "Inativo", value: 0, description: "Veiculos fora de operacao." },
-    { key: "SALE", label: "Venda", value: 0, description: "Veiculos destinados a venda." }
+    {
+      key: "ALL",
+      label: "Todos",
+      value: overview?.total ?? fleetVehicles.length,
+      description: "Base total de veiculos."
+    },
+    {
+      key: "AVAILABLE",
+      label: "Disponiveis",
+      value: overview?.available ?? availableVehicleCount,
+      description: "Veiculos liberados para uso."
+    },
+    {
+      key: "ALLOCATED",
+      label: "Alocados",
+      value: overview?.allocated ?? allocatedVehicleCount,
+      description: "Veiculos em operacao."
+    },
+    {
+      key: "MAINTENANCE",
+      label: "Manutencao",
+      value: overview?.maintenance ?? maintenanceVehicleCount,
+      description: "Veiculos em manutencao."
+    },
+    {
+      key: "INACTIVE",
+      label: "Inativos",
+      value: overview?.inactive ?? inactiveVehicleCount,
+      description: "Veiculos fora de operacao."
+    },
+    {
+      key: "WITH_ALERTS",
+      label: "Com alertas",
+      value: vehiclesWithAlertsCount,
+      description: "Ativos que pedem atencao."
+    },
+    {
+      key: "CHECKLIST_PENDING",
+      label: "Checklist pendente",
+      value: checklistPendingVehicleCount,
+      description: "Aguardando rotina obrigatoria."
+    }
   ];
 
   const heroHighlights =
     activeTab === "VEHICLES"
       ? [
-          { label: "Frota propria", value: 0, meta: "Veiculos da operacao." },
-          { label: "Frota alugada", value: 0, meta: "Veiculos sob locacao." },
-          { label: "Frota agregada", value: 0, meta: "Veiculos vinculados por parceiros." }
+          {
+            label: "Total da base",
+            value: overview?.total ?? fleetVehicles.length,
+            meta: "Veiculos cadastrados na operacao."
+          },
+          {
+            label: "Disponiveis",
+            value: overview?.available ?? availableVehicleCount,
+            meta: `${overview?.allocated ?? allocatedVehicleCount} alocado(s) agora`
+          },
+          {
+            label: "Com atencao",
+            value: vehicleAttentionCount,
+            meta: `${checklistPendingVehicleCount} com checklist pendente`
+          }
         ]
       : activeTab === "MAINTENANCE"
         ? [
@@ -561,55 +615,67 @@ export function FleetSectionsPage({ activeTab }: FleetSectionsPageProps) {
             ];
 
   return (
-    <main className={activeTab === "CHECKLISTS" ? "page-shell page-shell-wide" : "page-shell"}>
-      <section className="fleet-module-hero">
-        <div className="fleet-module-hero-surface">
-          <div className="fleet-module-hero-copy">
-            <div className="fleet-module-hero-topbar">
-              <div className="fleet-module-hero-heading">
-                <p className="eyebrow">{activeTab === "VEHICLES" ? "Veiculos" : "Frota"}</p>
-                <h1>{heroMeta.title}</h1>
-                <p className="fleet-module-hero-description">
-                  {heroMeta.description} {statusMessage}
-                </p>
-              </div>
-              {topbarActions}
-            </div>
-
-            <div className="fleet-module-hero-highlights">
-              {heroHighlights.map((item) => (
-                <article key={item.label} className="fleet-module-hero-highlight">
-                  <span>{item.label}</span>
-                  <strong>{item.value}</strong>
-                  <small>{item.meta}</small>
-                </article>
-              ))}
-            </div>
-          </div>
+    <main className="page-shell page-shell-wide cargo-list-page-shell fleet-cargo-page-shell">
+      <section className="cargo-list-page-header">
+        <div className="cargo-list-page-header-copy">
+          <h1>{heroMeta.title}</h1>
+          <p>
+            {heroMeta.description} {statusMessage}
+          </p>
+        </div>
+        <div className="cargo-list-page-header-actions fleet-cargo-header-actions">
+          <button
+            type="button"
+            className="button-link secondary-link"
+            onClick={() => {
+              setSearchTerm("");
+              setStatusFilter("ALL");
+              setAlertFilter("ALL");
+              setOperationFilter("ALL");
+              setMaintenanceFilter("ALL");
+            }}
+          >
+            Limpar filtros
+          </button>
+          {topbarActions}
         </div>
       </section>
 
-      {activeTab === "VEHICLES" ? (
-        <section className="drivers-overview-strip fleet-status-strip" aria-label="Status dos veiculos">
-          {vehicleStatusIndicators.map((view) => (
-            <article key={view.key} className="drivers-overview-item">
-              <span>{view.label}</span>
-              <strong>{view.value}</strong>
-              <small>{view.description}</small>
-            </article>
-          ))}
-        </section>
-      ) : (
-        <section className="fleet-module-summary-grid" aria-label="Resumo da frota">
-          {summaryCards.map((card) => (
-            <article key={card.label} className="fleet-module-summary-card">
-              <span>{card.label}</span>
-              <strong>{card.value}</strong>
-              <small>{card.meta}</small>
-            </article>
-          ))}
-        </section>
-      )}
+      <section className="grid grid-single fleet-cargo-summary-section">
+        <article className="panel panel-wide drivers-table-panel drivers-table-panel-clean cargo-list-table-panel">
+          <div className="fleet-cargo-highlights" aria-label="Resumo da frota">
+            {heroHighlights.map((item) => (
+              <article key={item.label} className="fleet-cargo-highlight-card">
+                <span>{item.label}</span>
+                <strong>{item.value}</strong>
+                <small>{item.meta}</small>
+              </article>
+            ))}
+          </div>
+
+          {activeTab === "VEHICLES" ? (
+            <div className="drivers-overview-strip fleet-status-strip" aria-label="Status dos veiculos">
+              {vehicleStatusIndicators.map((view) => (
+                <article key={view.key} className="drivers-overview-item">
+                  <span>{view.label}</span>
+                  <strong>{view.value}</strong>
+                  <small>{view.description}</small>
+                </article>
+              ))}
+            </div>
+          ) : (
+            <div className="fleet-module-summary-grid" aria-label="Resumo da frota">
+              {summaryCards.map((card) => (
+                <article key={card.label} className="fleet-module-summary-card">
+                  <span>{card.label}</span>
+                  <strong>{card.value}</strong>
+                  <small>{card.meta}</small>
+                </article>
+              ))}
+            </div>
+          )}
+        </article>
+      </section>
 
       {activeTab === "OVERVIEW" ? (
         <section className="grid grid-single">
@@ -728,11 +794,45 @@ export function FleetSectionsPage({ activeTab }: FleetSectionsPageProps) {
                     <SearchIcon />
                   </span>
                 </label>
+                <select
+                  className={
+                    hasVehicleViewFilters
+                      ? "select drivers-filter-toggle is-active"
+                      : "select drivers-filter-toggle"
+                  }
+                  value={statusFilter}
+                  onChange={(event) =>
+                    setStatusFilter(event.target.value as "ALL" | FleetVehicleOverview["status"])
+                  }
+                  aria-label="Filtrar por status"
+                >
+                  <option value="ALL">Todos os status</option>
+                  <option value="AVAILABLE">Disponiveis</option>
+                  <option value="ALLOCATED">Alocados</option>
+                  <option value="MAINTENANCE">Manutencao</option>
+                  <option value="INACTIVE">Inativos</option>
+                </select>
+                <select
+                  className={
+                    hasVehicleViewFilters
+                      ? "select drivers-filter-toggle is-active"
+                      : "select drivers-filter-toggle"
+                  }
+                  value={alertFilter}
+                  onChange={(event) =>
+                    setAlertFilter(event.target.value as "ALL" | "ALERT_ONLY" | "CHECKLIST_PENDING")
+                  }
+                  aria-label="Filtrar por alertas e checklist"
+                >
+                  <option value="ALL">Todos os alertas</option>
+                  <option value="ALERT_ONLY">Com alertas</option>
+                  <option value="CHECKLIST_PENDING">Checklist pendente</option>
+                </select>
               </div>
             </div>
 
             <div className="fleet-queue-list">
-              {!isMobileLayout ? (
+              {!isMobileLayout && filteredVehicles.length > 0 ? (
                 <table className="drivers-table">
                 <thead>
                   <tr>
@@ -806,7 +906,7 @@ export function FleetSectionsPage({ activeTab }: FleetSectionsPageProps) {
                 </table>
               ) : null}
 
-              {isMobileLayout ? (
+              {isMobileLayout && filteredVehicles.length > 0 ? (
                 <div className="drivers-mobile-list">
                   {filteredVehicles.map((vehicle) => (
                     <div
@@ -849,12 +949,14 @@ export function FleetSectionsPage({ activeTab }: FleetSectionsPageProps) {
               ) : null}
 
               {filteredVehicles.length === 0 ? (
-                <div className="empty-state">
+                <div className="cargo-list-empty-state fleet-vehicles-empty-state">
                   <strong>Nenhum veiculo encontrado.</strong>
                   <p>Ajuste a busca ou os filtros, ou cadastre um novo carro para a operacao.</p>
-                  <Link href="/fleet/veiculos/novo" className="button-link">
-                    Cadastrar carro
-                  </Link>
+                  <div className="cargo-list-empty-state-actions fleet-vehicles-empty-actions">
+                    <Link href="/fleet/veiculos/novo" className="button-link fleet-vehicles-empty-cta">
+                      Cadastrar carro
+                    </Link>
+                  </div>
                 </div>
               ) : null}
             </div>

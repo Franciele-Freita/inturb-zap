@@ -46,7 +46,7 @@ export function RemunerationTemplatesPage() {
   }, [templates, searchTerm, statusFilter]);
 
   const activeCount = useMemo(() => templates.filter((template) => template.isActive).length, [templates]);
-  const hasActiveFilters = statusFilter !== "ALL";
+  const hasActiveFilters = statusFilter !== "ALL" || searchTerm.trim().length > 0;
 
   return (
     <main className="page-shell">
@@ -148,12 +148,35 @@ export function RemunerationTemplatesPage() {
             </table>
 
             {filteredTemplates.length === 0 ? (
-              <div className="empty-state">
-                <strong>Nenhum template encontrado.</strong>
-                <p>Crie o primeiro template de remuneracao para padronizar o step 6 do cadastro de motorista.</p>
-                <Link href="/compensation/new" className="button-link">
-                  Criar template
-                </Link>
+              <div className="administrative-list-empty-state">
+                {hasActiveFilters ? (
+                  <>
+                    <strong>Nenhum template corresponde aos filtros aplicados.</strong>
+                    <p>Ajuste a busca ou limpe os filtros para visualizar os templates de remuneracao.</p>
+                    <div className="administrative-list-empty-state-actions">
+                      <button
+                        type="button"
+                        className="button-link secondary-link"
+                        onClick={() => {
+                          setSearchTerm("");
+                          setStatusFilter("ALL");
+                        }}
+                      >
+                        Limpar filtros
+                      </button>
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    <strong>Nenhum template encontrado.</strong>
+                    <p>Crie o primeiro template de remuneracao para padronizar o step 6 do cadastro de motorista.</p>
+                    <div className="administrative-list-empty-state-actions">
+                      <Link href="/compensation/new" className="button-link">
+                        Criar template
+                      </Link>
+                    </div>
+                  </>
+                )}
               </div>
             ) : null}
           </div>

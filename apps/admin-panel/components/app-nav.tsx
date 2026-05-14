@@ -79,6 +79,98 @@ function isAdministrativeNightPoliciesPath(pathname: string): boolean {
   return pathname === "/administrative/night-policies" || pathname.startsWith("/administrative/night-policies/");
 }
 
+function isAdministrativeHolidaysPath(pathname: string): boolean {
+  return pathname === "/administrative/holidays" || pathname.startsWith("/administrative/holidays/");
+}
+
+function isAdministrativeTimekeepingPath(pathname: string): boolean {
+  return pathname === "/administrative/timekeeping" || pathname.startsWith("/administrative/timekeeping/");
+}
+
+function isAdministrativeTimekeepingRegisterPath(pathname: string): boolean {
+  return pathname === "/administrative/timekeeping/register" || pathname.startsWith("/administrative/timekeeping/register/");
+}
+
+function isAdministrativeTimekeepingMirrorPath(pathname: string): boolean {
+  return pathname === "/administrative/timekeeping/mirror" || pathname.startsWith("/administrative/timekeeping/mirror/");
+}
+
+function isAdministrativeTimekeepingAdjustmentsPath(pathname: string): boolean {
+  return pathname === "/administrative/timekeeping/adjustments" || pathname.startsWith("/administrative/timekeeping/adjustments/");
+}
+
+function isAdministrativeTimekeepingApprovalsPath(pathname: string): boolean {
+  return pathname === "/administrative/timekeeping/approvals" || pathname.startsWith("/administrative/timekeeping/approvals/");
+}
+
+function isAdministrativePayrollPath(pathname: string): boolean {
+  return pathname === "/administrative/payroll" || pathname.startsWith("/administrative/payroll/");
+}
+
+function isFinancialPath(pathname: string): boolean {
+  return pathname === "/financial" || pathname.startsWith("/financial/");
+}
+
+function isFinancialOverviewPath(pathname: string): boolean {
+  return pathname === "/financial" || pathname === "/financial/dashboard" || pathname.startsWith("/financial/dashboard/");
+}
+
+function isFinancialAccountsPayablePath(pathname: string): boolean {
+  return pathname === "/financial/accounts-payable" || pathname.startsWith("/financial/accounts-payable/");
+}
+
+function isFinancialAccountsReceivablePath(pathname: string): boolean {
+  return pathname === "/financial/accounts-receivable" || pathname.startsWith("/financial/accounts-receivable/");
+}
+
+function isFinancialEntriesPath(pathname: string): boolean {
+  return pathname === "/financial/entries" || pathname.startsWith("/financial/entries/");
+}
+
+function isFinancialCashFlowPath(pathname: string): boolean {
+  return pathname === "/financial/cash-flow" || pathname.startsWith("/financial/cash-flow/");
+}
+
+function isFinancialCategoriesPath(pathname: string): boolean {
+  return pathname === "/financial/categories" || pathname.startsWith("/financial/categories/");
+}
+
+function isFinancialCostCentersPath(pathname: string): boolean {
+  return pathname === "/financial/cost-centers" || pathname.startsWith("/financial/cost-centers/");
+}
+
+function isFinancialPaymentMethodsPath(pathname: string): boolean {
+  return pathname === "/financial/payment-methods" || pathname.startsWith("/financial/payment-methods/");
+}
+
+function isFinancialAccountsPath(pathname: string): boolean {
+  return pathname === "/financial/accounts" || pathname.startsWith("/financial/accounts/");
+}
+
+function isFinancialReconciliationPath(pathname: string): boolean {
+  return pathname === "/financial/reconciliation" || pathname.startsWith("/financial/reconciliation/");
+}
+
+function isFinancialInvoicesPath(pathname: string): boolean {
+  return pathname === "/financial/invoices" || pathname.startsWith("/financial/invoices/");
+}
+
+function isFinancialReceiptsPath(pathname: string): boolean {
+  return pathname === "/financial/receipts" || pathname.startsWith("/financial/receipts/");
+}
+
+function isFinancialReportsPath(pathname: string): boolean {
+  return pathname === "/financial/reports" || pathname.startsWith("/financial/reports/");
+}
+
+function isFleetChecklistRealizadosPath(pathname: string): boolean {
+  return pathname === "/fleet/checklists/realizados" || pathname.startsWith("/fleet/checklists/realizados/");
+}
+
+function isFleetChecklistTemplatePath(pathname: string): boolean {
+  return pathname.startsWith("/fleet/checklists") && !isFleetChecklistRealizadosPath(pathname);
+}
+
 const links: NavLinkConfig[] = [
   { key: "overview", href: "/", label: "Visao geral", shortLabel: "Inicio", icon: <IconGrid /> },
   {
@@ -109,7 +201,14 @@ const links: NavLinkConfig[] = [
       { href: "/fleet/veiculos", label: "Veiculos", icon: <IconCar /> },
       { href: "/fleet/manutencao", label: "Manutencao", icon: <IconSettings /> },
       { label: "Limpeza", icon: <IconSparkles /> },
-      { href: "/fleet/checklists", label: "Checklist", icon: <IconChecklist /> },
+      {
+        label: "Checklist",
+        icon: <IconChecklist />,
+        children: [
+          { href: "/fleet/checklists", label: "Template", icon: <IconFileText />, isActive: isFleetChecklistTemplatePath },
+          { href: "/fleet/checklists/realizados", label: "Realizados", icon: <IconGrid />, isActive: isFleetChecklistRealizadosPath }
+        ]
+      },
       { label: "Multas", icon: <IconWarning /> }
     ]
   },
@@ -133,16 +232,29 @@ const links: NavLinkConfig[] = [
     children: [
       { href: "/administrative/work-profiles", label: "Perfis de trabalho", icon: <IconUsers />, isActive: isAdministrativeWorkProfilesPath },
       {
-        label: "Parâmetros de trabalho",
+        label: "Parametros de trabalho",
         icon: <IconSettings />,
         children: [
           { href: "/administrative/cargo", label: "Cargo", icon: <IconLayers />, isActive: isAdministrativeCargoPath },
           { href: "/administrative/benefits", label: "Beneficios", icon: <IconWallet />, isActive: isAdministrativeBenefitsPath },
           { href: "/administrative/scales", label: "Jornadas de trabalho", icon: <IconRoute />, isActive: isAdministrativeScalesPath },
           { href: "/administrative/overtime", label: "Politica de hora extra", icon: <IconClock />, isActive: isAdministrativeOvertimePath },
-          { href: "/administrative/night-policies", label: "Regras de adicional noturno", icon: <IconMoon />, isActive: isAdministrativeNightPoliciesPath }
+          { href: "/administrative/night-policies", label: "Adicional noturno", icon: <IconMoon />, isActive: isAdministrativeNightPoliciesPath },
+          { href: "/administrative/holidays", label: "Feriados", icon: <IconHoliday />, isActive: isAdministrativeHolidaysPath }
         ]
       },
+      {
+        label: "Controle de ponto",
+        icon: <IconClock />,
+        isActive: isAdministrativeTimekeepingPath,
+        children: [
+          { href: "/administrative/timekeeping/register", label: "Registrar ponto", icon: <IconClock />, isActive: isAdministrativeTimekeepingRegisterPath },
+          { href: "/administrative/timekeeping/mirror", label: "Espelho de ponto", icon: <IconGrid />, isActive: isAdministrativeTimekeepingMirrorPath },
+          { href: "/administrative/timekeeping/adjustments", label: "Ajustes", icon: <IconSettings />, isActive: isAdministrativeTimekeepingAdjustmentsPath },
+          { href: "/administrative/timekeeping/approvals", label: "Aprovacoes", icon: <IconUsers />, isActive: isAdministrativeTimekeepingApprovalsPath }
+        ]
+      },
+      { href: "/administrative/payroll", label: "Folha de pagamento", icon: <IconWallet />, isActive: isAdministrativePayrollPath },
       {
         label: "Modelos de documentos",
         icon: <IconFileText />,
@@ -151,6 +263,52 @@ const links: NavLinkConfig[] = [
           { href: "/documents/templates/variables", label: "Variaveis", icon: <IconGrid />, isActive: isDocumentTemplateVariablesPath }
         ]
       }
+    ]
+  },
+  {
+    key: "financial",
+    label: "Financeiro",
+    shortLabel: "Financeiro",
+    icon: <IconWallet />,
+    isActive: isFinancialPath,
+    children: [
+      {
+        label: "Visao geral",
+        icon: <IconGrid />,
+        children: [
+          { href: "/financial", label: "Dashboard financeiro", icon: <IconGrid />, isActive: isFinancialOverviewPath },
+          { href: "/financial/cash-flow", label: "Fluxo de caixa", icon: <IconRoute />, isActive: isFinancialCashFlowPath }
+        ]
+      },
+      {
+        label: "Movimentacoes",
+        icon: <IconFileText />,
+        children: [
+          { href: "/financial/accounts-payable", label: "Contas a pagar", icon: <IconWallet />, isActive: isFinancialAccountsPayablePath },
+          { href: "/financial/accounts-receivable", label: "Contas a receber", icon: <IconWallet />, isActive: isFinancialAccountsReceivablePath },
+          { href: "/financial/entries", label: "Lancamentos", icon: <IconFileText />, isActive: isFinancialEntriesPath }
+        ]
+      },
+      {
+        label: "Cobrancas",
+        icon: <IconFileText />,
+        children: [
+          { href: "/financial/invoices", label: "Faturas / cobrancas", icon: <IconFileText />, isActive: isFinancialInvoicesPath },
+          { href: "/financial/receipts", label: "Recibos e comprovantes", icon: <IconFileText />, isActive: isFinancialReceiptsPath }
+        ]
+      },
+      {
+        label: "Estrutura financeira",
+        icon: <IconLayers />,
+        children: [
+          { href: "/financial/accounts", label: "Contas bancarias / caixas", icon: <IconWallet />, isActive: isFinancialAccountsPath },
+          { href: "/financial/payment-methods", label: "Formas de pagamento", icon: <IconWallet />, isActive: isFinancialPaymentMethodsPath },
+          { href: "/financial/categories", label: "Categorias financeiras", icon: <IconLayers />, isActive: isFinancialCategoriesPath },
+          { href: "/financial/cost-centers", label: "Centros de custo", icon: <IconLayers />, isActive: isFinancialCostCentersPath }
+        ]
+      },
+      { href: "/financial/reconciliation", label: "Conciliacao bancaria", icon: <IconSettings />, isActive: isFinancialReconciliationPath },
+      { href: "/financial/reports", label: "Relatorios", icon: <IconGrid />, isActive: isFinancialReportsPath }
     ]
   }
 ];
@@ -511,6 +669,12 @@ function IconClock() {
 function IconMoon() {
   return (
     <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="lucide lucide-moon-icon lucide-moon"><path d="M20.985 12.486a9 9 0 1 1-9.473-9.472c.405-.022.617.46.402.803a6 6 0 0 0 8.268 8.268c.344-.215.825-.004.803.401"/></svg>
+  );
+}
+
+function IconHoliday() {
+  return (
+    <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="lucide lucide-sun-medium-icon lucide-sun-medium"><circle cx="12" cy="12" r="4"/><path d="M12 2v2"/><path d="M12 20v2"/><path d="m4.93 4.93 1.41 1.41"/><path d="m17.66 17.66 1.41 1.41"/><path d="M2 12h2"/><path d="M20 12h2"/><path d="m6.34 17.66-1.41 1.41"/><path d="m19.07 4.93-1.41 1.41"/></svg>
   );
 }
 

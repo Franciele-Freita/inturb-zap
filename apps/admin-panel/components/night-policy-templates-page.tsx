@@ -2,12 +2,13 @@
 
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
-import { OvertimeTemplate, formatDateTime, request } from "../lib/api";
+import { OvertimeTemplate, request } from "../lib/api";
 import {
   isOvertimeTemplateCategory,
   readNightPolicySnapshot
 } from "../lib/overtime-policy-settings";
 import { AdminTableRowActions } from "./admin-table-row-actions";
+import { AdministrativeListPagination } from "./administrative-list-pagination";
 import { SearchIcon } from "./icons/common-icons";
 
 type StatusFilter = "ALL" | "ACTIVE" | "INACTIVE";
@@ -17,6 +18,8 @@ export function NightPolicyTemplatesPage() {
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
   const [searchTerm, setSearchTerm] = useState("");
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("ALL");
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState<number>(10);
   const [pendingId, setPendingId] = useState<string | null>(null);
 
   useEffect(() => {
@@ -25,7 +28,7 @@ export function NightPolicyTemplatesPage() {
 
   async function loadTemplates() {
     try {
-      const data = await request<OvertimeTemplate[]>("/admin/overtime-templates");
+      const data = await request<OvertimeTemplate[]>("/admin/overtime-templates?category=NIGHT");
       setTemplates(data.filter((item) => isOvertimeTemplateCategory(item, "NIGHT")));
       setStatusMessage(null);
     } catch (error) {
@@ -77,6 +80,20 @@ export function NightPolicyTemplatesPage() {
       return matchesSearch && matchesStatus;
     });
   }, [templates, searchTerm, statusFilter]);
+  const totalPages = useMemo(
+    () => Math.max(1, Math.ceil(filteredTemplates.length / pageSize)),
+    [filteredTemplates.length, pageSize]
+  );
+  const paginatedTemplates = useMemo(() => {
+    const start = (page - 1) * pageSize;
+    return filteredTemplates.slice(start, start + pageSize);
+  }, [filteredTemplates, page, pageSize]);
+
+  useEffect(() => {
+    if (page > totalPages) {
+      setPage(totalPages);
+    }
+  }, [page, totalPages]);
 
   const activeCount = useMemo(() => templates.filter((template) => template.isActive).length, [templates]);
   const inactiveCount = Math.max(templates.length - activeCount, 0);
@@ -96,6 +113,7 @@ export function NightPolicyTemplatesPage() {
             onClick={() => {
               setSearchTerm("");
               setStatusFilter("ALL");
+              setPage(1);
               setStatusMessage(null);
             }}
           >
@@ -122,7 +140,10 @@ export function NightPolicyTemplatesPage() {
               <label className="admin-header-search drivers-inline-search">
                 <input
                   value={searchTerm}
-                  onChange={(event) => setSearchTerm(event.target.value)}
+                  onChange={(event) => {
+                    setSearchTerm(event.target.value);
+                    setPage(1);
+                  }}
                   placeholder="Buscar por nome, descricao ou perfil..."
                 />
                 <span className="admin-header-search-icon" aria-hidden="true">
@@ -132,7 +153,10 @@ export function NightPolicyTemplatesPage() {
               <select
                 className={hasActiveFilters ? "select drivers-filter-toggle is-active" : "select drivers-filter-toggle"}
                 value={statusFilter}
-                onChange={(event) => setStatusFilter(event.target.value as StatusFilter)}
+                onChange={(event) => {
+                  setStatusFilter(event.target.value as StatusFilter);
+                  setPage(1);
+                }}
               >
                 <option value="ALL">Todos</option>
                 <option value="ACTIVE">Ativos</option>
@@ -150,12 +174,11 @@ export function NightPolicyTemplatesPage() {
                   <th>Percentual</th>
                   <th>Acumula com hora extra</th>
                   <th>Status</th>
-                  <th>Atualizacao</th>
                   <th>Acoes</th>
                 </tr>
               </thead>
               <tbody>
-                {filteredTemplates.map((template) => {
+                {paginatedTemplates.map((template) => {
                   const snapshot = readNightPolicySnapshot(template.settings);
                   return (
                     <tr key={template.id}>
@@ -173,15 +196,14 @@ export function NightPolicyTemplatesPage() {
                           {template.isActive ? "Ativo" : "Inativo"}
                         </span>
                       </td>
-                      <td>{formatDateTime(template.updatedAt)}</td>
                       <td>
                         <AdminTableRowActions
-                          primary={{
-                            id: `${template.id}_edit`,
-                            label: "Editar",
-                            href: `/administrative/night-policies/${template.id}/edit`
-                          }}
                           items={[
+                            {
+                              id: `${template.id}_edit`,
+                              label: "Editar",
+                              href: `/administrative/night-policies/${template.id}/edit`
+                            },
                             {
                               id: `${template.id}_view`,
                               label: "Visualizar",
@@ -208,15 +230,50 @@ export function NightPolicyTemplatesPage() {
             </table>
 
             {filteredTemplates.length === 0 ? (
-              <div className="empty-state">
-                <strong>Nenhuma politica encontrada.</strong>
-                <p>Cadastre a primeira politica para padronizar adicional noturno por perfil.</p>
-                <Link href="/administrative/night-policies/new" className="button-link">
-                  Criar politica
-                </Link>
+              <div className="administrative-list-empty-state">
+                {hasActiveFilters ? (
+                  <>
+                    <strong>Nenhuma politica corresponde aos filtros aplicados.</strong>
+                    <p>Ajuste a busca ou limpe os filtros para visualizar as politicas de adicional noturno.</p>
+                    <div className="administrative-list-empty-state-actions">
+                      <button
+                        type="button"
+                        className="button-link secondary-link"
+                        onClick={() => {
+                          setSearchTerm("");
+                          setStatusFilter("ALL");
+                          setPage(1);
+                        }}
+                      >
+                        Limpar filtros
+                      </button>
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    <strong>Nenhuma politica encontrada.</strong>
+                    <p>Cadastre a primeira politica para padronizar adicional noturno por perfil.</p>
+                    <div className="administrative-list-empty-state-actions">
+                      <Link href="/administrative/night-policies/new" className="button-link">
+                        Criar politica
+                      </Link>
+                    </div>
+                  </>
+                )}
               </div>
             ) : null}
           </div>
+          <AdministrativeListPagination
+            page={page}
+            pageSize={pageSize}
+            totalItems={filteredTemplates.length}
+            label="Paginacao da tabela de politicas de adicional noturno"
+            onPageChange={setPage}
+            onPageSizeChange={(value) => {
+              setPageSize(value);
+              setPage(1);
+            }}
+          />
         </article>
       </section>
     </main>

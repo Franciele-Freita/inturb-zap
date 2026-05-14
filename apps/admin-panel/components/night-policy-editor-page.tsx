@@ -26,6 +26,7 @@ type FormState = {
   nightEndTime: string;
   nightPercent: string;
   nightAccumulatesWithOvertime: boolean;
+  nightReflectsOnDsr: boolean;
 };
 
 const defaultForm: FormState = {
@@ -37,7 +38,8 @@ const defaultForm: FormState = {
   nightStartTime: "22:00",
   nightEndTime: "05:00",
   nightPercent: "20",
-  nightAccumulatesWithOvertime: true
+  nightAccumulatesWithOvertime: true,
+  nightReflectsOnDsr: true
 };
 
 export function NightPolicyEditorPage({ mode, policyId }: Props) {
@@ -76,6 +78,7 @@ export function NightPolicyEditorPage({ mode, policyId }: Props) {
     if (form.name.trim().length < 3) return false;
     if (!form.nightEnabled) return true;
     if (!isClock(form.nightStartTime) || !isClock(form.nightEndTime)) return false;
+    if (form.nightStartTime === form.nightEndTime) return false;
     if ((toNum(form.nightPercent) ?? -1) < 0) return false;
     return true;
   }, [form, isCategoryMismatch, isLoading, isReadOnly, isSaving]);
@@ -152,15 +155,26 @@ export function NightPolicyEditorPage({ mode, policyId }: Props) {
 
             {form.nightEnabled ? (
               <div className="form-grid">
-                <label>Inicio da faixa<input type="time" value={form.nightStartTime} onChange={(event) => update("nightStartTime", event.target.value)} disabled={disabled} /></label>
-                <label>Fim da faixa<input type="time" value={form.nightEndTime} onChange={(event) => update("nightEndTime", event.target.value)} disabled={disabled} /></label>
-                <label>Percentual do adicional<input type="number" min="0" step="0.01" value={form.nightPercent} onChange={(event) => update("nightPercent", event.target.value)} disabled={disabled} /></label>
+                <label>Inicio da faixa<input type="time" value={form.nightStartTime} onChange={(event) => update("nightStartTime", event.target.value)} disabled={disabled} /><small className="helper-text">Padrão urbano: 22:00</small></label>
+                <label>Fim da faixa<input type="time" value={form.nightEndTime} onChange={(event) => update("nightEndTime", event.target.value)} disabled={disabled} /><small className="helper-text">Padrão urbano: 05:00</small></label>
+                <label>Percentual do adicional (%)<input type="number" min="0" step="0.01" value={form.nightPercent} onChange={(event) => update("nightPercent", event.target.value)} disabled={disabled} /><small className="helper-text">Mínimo legal urbano: 20%</small></label>
                 <label className="toggle-field"><span>Acumula com hora extra</span><input type="checkbox" checked={form.nightAccumulatesWithOvertime} onChange={(event) => update("nightAccumulatesWithOvertime", event.target.checked)} disabled={disabled} /></label>
+                <label className="toggle-field"><span>Refletir no DSR</span><input type="checkbox" checked={form.nightReflectsOnDsr} onChange={(event) => update("nightReflectsOnDsr", event.target.checked)} disabled={disabled} /></label>
+                {form.nightStartTime === form.nightEndTime ? (
+                  <small className="journey-field-error">Inicio e fim da faixa noturna nao podem ser iguais.</small>
+                ) : null}
               </div>
             ) : (
               <div className="driver-editor-contract-inline-note">
                 <strong>Adicional noturno desabilitado</strong>
                 <span>A politica sera salva sem regras de adicional noturno.</span>
+              </div>
+            )}
+
+            {form.nightEnabled && (
+              <div className="driver-editor-contract-inline-note">
+                <strong>Hora Noturna Reduzida (Hora Ficta)</strong>
+                <span>Esta politica registra a regra de hora ficta (52m30s) para uso na apuracao do modulo de ponto.</span>
               </div>
             )}
 
@@ -189,7 +203,8 @@ function mapTemplateToForm(template: OvertimeTemplate): FormState {
     nightStartTime: snapshot.startTime,
     nightEndTime: snapshot.endTime,
     nightPercent: String(snapshot.percent),
-    nightAccumulatesWithOvertime: snapshot.accumulatesWithOvertime
+    nightAccumulatesWithOvertime: snapshot.accumulatesWithOvertime,
+    nightReflectsOnDsr: snapshot.reflectsOnDsr
   };
 }
 
@@ -232,7 +247,8 @@ function buildPayload(form: FormState) {
         startTime: form.nightEnabled ? form.nightStartTime : undefined,
         endTime: form.nightEnabled ? form.nightEndTime : undefined,
         percent: form.nightEnabled ? nightPercent : undefined,
-        accumulatesWithOvertime: form.nightEnabled ? form.nightAccumulatesWithOvertime : false
+        accumulatesWithOvertime: form.nightEnabled ? form.nightAccumulatesWithOvertime : false,
+        reflectsOnDsr: form.nightEnabled ? form.nightReflectsOnDsr : false
       }
     }
   };
@@ -246,3 +262,4 @@ function toNum(value: string): number | undefined {
   const parsed = Number(value.trim().replace(",", "."));
   return Number.isFinite(parsed) ? parsed : undefined;
 }
+

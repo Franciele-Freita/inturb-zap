@@ -6,11 +6,13 @@ import { PricingModule } from "../pricing/pricing.module";
 import { RidesModule } from "../rides/rides.module";
 import { AdminController } from "./admin.controller";
 import { AdminService } from "./admin.service";
+import { LaborPolicyService } from "./labor-policy.service";
+import { TimekeepingService } from "./timekeeping.service";
 
 @Module({
   imports: [AuthModule, RidesModule, PricingModule, DriversModule, NotificationsModule],
   controllers: [AdminController],
-  providers: [AdminService],
+  providers: [AdminService, TimekeepingService, LaborPolicyService],
   exports: [AdminService]
 })
 export class AdminModule {}

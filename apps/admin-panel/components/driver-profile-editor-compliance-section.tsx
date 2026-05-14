@@ -3,6 +3,8 @@
 import { ChangeEvent, useRef, useState } from "react";
 import {
   DriverComplianceHistoryItem,
+  DriverDocument,
+  DriverDocumentCategory,
   DriverLicense,
   DriverPsychotechnical,
   DriverToxicology
@@ -24,9 +26,30 @@ type DriverProfileEditorComplianceSectionProps = {
   activeSection: DriverEditorSection;
   driverLicense?: DriverLicenseState;
   toxicology?: ToxicologyState;
+  additionalDocuments: DriverDocument[];
   complianceHistory: DriverComplianceHistoryItem[];
   onDriverLicenseChange: (value?: DriverLicenseState) => void;
+  onAdditionalDocumentsChange: (value: DriverDocument[]) => void;
   onToxicologyChange: (value?: ToxicologyState) => void;
+};
+
+type RequiredDocumentStatus = "PENDENTE" | "ENVIADO" | "VENCIDO" | "VALIDO";
+type RequiredDocumentCard = {
+  category: DriverDocumentCategory;
+  label: string;
+  required: true;
+  status: RequiredDocumentStatus;
+  document?: DriverDocument;
+};
+
+type RequiredDocumentDraft = {
+  id: string;
+  category: DriverDocumentCategory;
+  title: string;
+  expiresAt: string;
+  fileName: string;
+  fileUrl: string;
+  notes: string;
 };
 
 const emptyDriverLicense: DriverLicenseState = {
@@ -119,6 +142,7 @@ const brazilStateOptions = [
   "SE",
   "TO"
 ] as const;
+const requiredDocumentCategories: DriverDocumentCategory[] = ["IDENTIFICATION", "CRIMINAL_RECORD"];
 
 function digitsOnly(value: string): string {
   return value.replace(/\D/g, "");
@@ -222,27 +246,80 @@ function resolveDriverLicenseStatusLabel(license: DriverLicenseState): string {
   return "Valida";
 }
 
+function resolveRequiredDocumentLabel(category: DriverDocumentCategory): string {
+  if (category === "IDENTIFICATION") return "Identificacao";
+  if (category === "CRIMINAL_RECORD") return "Antecedentes";
+  if (category === "RESIDENCE_PROOF") return "Comprovante de residencia";
+  if (category === "TRAINING") return "Treinamento";
+  return "Outro documento";
+}
+
+function isDateExpired(value?: string): boolean {
+  if (!value?.trim()) return false;
+  const parsed = new Date(`${value}T00:00:00`);
+  if (Number.isNaN(parsed.getTime())) return false;
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  return parsed.getTime() < today.getTime();
+}
+
+function resolveRequiredDocumentStatus(document?: DriverDocument): RequiredDocumentStatus {
+  if (!document) return "PENDENTE";
+  if (!document.fileUrl?.trim()) return "PENDENTE";
+  if (isDateExpired(document.expiresAt)) return "VENCIDO";
+  if (!document.expiresAt?.trim()) return "ENVIADO";
+  return "VALIDO";
+}
+
+function resolveRequiredDocumentStatusLabel(status: RequiredDocumentStatus): string {
+  if (status === "PENDENTE") return "Pendente";
+  if (status === "ENVIADO") return "Enviado";
+  if (status === "VENCIDO") return "Vencido";
+  return "Valido";
+}
+
+function resolveRequiredDocumentStatusClassName(status: RequiredDocumentStatus): string {
+  if (status === "VENCIDO") return "status-pill rides-status-pill-danger";
+  if (status === "PENDENTE") return "status-pill";
+  if (status === "ENVIADO") return "status-pill rides-status-pill-warning";
+  return "status-pill status-pill-success";
+}
+
 export function DriverProfileEditorComplianceSection({
   activeSection,
   driverLicense,
   toxicology,
+  additionalDocuments,
   complianceHistory,
   onDriverLicenseChange,
+  onAdditionalDocumentsChange,
   onToxicologyChange
 }: DriverProfileEditorComplianceSectionProps) {
   const [activeTab, setActiveTab] = useState<"current" | "history">("current");
   const [isLicenseModalOpen, setIsLicenseModalOpen] = useState(false);
   const [isToxicologyModalOpen, setIsToxicologyModalOpen] = useState(false);
   const [isPsychotechnicalModalOpen, setIsPsychotechnicalModalOpen] = useState(false);
+  const [isRequiredDocumentModalOpen, setIsRequiredDocumentModalOpen] = useState(false);
   const [draftDriverLicense, setDraftDriverLicense] = useState<DriverLicenseState>(emptyDriverLicense);
   const [draftToxicology, setDraftToxicology] = useState<ToxicologyState>(emptyToxicology);
   const [draftPsychotechnical, setDraftPsychotechnical] = useState<PsychotechnicalState>(emptyPsychotechnical);
+  const [draftRequiredDocument, setDraftRequiredDocument] = useState<RequiredDocumentDraft>({
+    id: "",
+    category: "IDENTIFICATION",
+    title: "",
+    expiresAt: "",
+    fileName: "",
+    fileUrl: "",
+    notes: ""
+  });
   const [licensePhotoError, setLicensePhotoError] = useState("");
   const licensePhotoInputRef = useRef<HTMLInputElement | null>(null);
   const [toxicologyReportError, setToxicologyReportError] = useState("");
   const toxicologyReportInputRef = useRef<HTMLInputElement | null>(null);
   const [psychotechnicalReportError, setPsychotechnicalReportError] = useState("");
   const psychotechnicalReportInputRef = useRef<HTMLInputElement | null>(null);
+  const [requiredDocumentError, setRequiredDocumentError] = useState("");
+  const requiredDocumentInputRef = useRef<HTMLInputElement | null>(null);
   const currentLicense = driverLicense ?? emptyDriverLicense;
   const currentToxicology = toxicology
     ? {
@@ -265,6 +342,30 @@ export function DriverProfileEditorComplianceSection({
   const psychotechnicalSituationLabel = resolvePsychotechnicalSituationLabel(currentPsychotechnical.situation);
   const draftPsychotechnicalStatus = resolveComplianceExamStatus(draftPsychotechnical);
   const draftPsychotechnicalStatusLabel = resolveComplianceExamStatusLabel(draftPsychotechnicalStatus);
+  const requiredDocumentCards: RequiredDocumentCard[] = requiredDocumentCategories.map((category) => {
+    const document = additionalDocuments.find((item) => item.category === category);
+    return {
+      category,
+      label: resolveRequiredDocumentLabel(category),
+      required: true,
+      status: resolveRequiredDocumentStatus(document),
+      document
+    };
+  });
+  const draftRequiredDocumentStatus = resolveRequiredDocumentStatus(
+    draftRequiredDocument.fileUrl.trim()
+      ? {
+          id: draftRequiredDocument.id,
+          category: draftRequiredDocument.category,
+          title: draftRequiredDocument.title,
+          fileName: draftRequiredDocument.fileName,
+          fileUrl: draftRequiredDocument.fileUrl,
+          expiresAt: draftRequiredDocument.expiresAt || undefined,
+          notes: draftRequiredDocument.notes || undefined,
+          status: "VALID"
+        }
+      : undefined
+  );
 
   function openLicenseModal() {
     setDraftDriverLicense({
@@ -296,6 +397,70 @@ export function DriverProfileEditorComplianceSection({
     });
     setPsychotechnicalReportError("");
     setIsPsychotechnicalModalOpen(true);
+  }
+
+  function openRequiredDocumentModal(category: DriverDocumentCategory) {
+    const existing = additionalDocuments.find((item) => item.category === category);
+    setDraftRequiredDocument({
+      id: existing?.id ?? "",
+      category,
+      title: existing?.title ?? resolveRequiredDocumentLabel(category),
+      expiresAt: existing?.expiresAt ?? "",
+      fileName: existing?.fileName ?? "",
+      fileUrl: existing?.fileUrl ?? "",
+      notes: existing?.notes ?? ""
+    });
+    setRequiredDocumentError("");
+    setIsRequiredDocumentModalOpen(true);
+  }
+
+  function openRequiredDocumentFilePicker() {
+    requiredDocumentInputRef.current?.click();
+  }
+
+  function clearRequiredDocumentFile() {
+    setDraftRequiredDocument((current) => ({
+      ...current,
+      fileName: "",
+      fileUrl: ""
+    }));
+    setRequiredDocumentError("");
+  }
+
+  function handleRequiredDocumentFileChange(event: ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    if (!file) return;
+
+    const isPdf = file.type === "application/pdf";
+    const isImage = file.type.startsWith("image/");
+    if (!isPdf && !isImage) {
+      setRequiredDocumentError("Anexe um PDF ou imagem valida.");
+      return;
+    }
+    if (file.size > 8 * 1024 * 1024) {
+      setRequiredDocumentError("O arquivo deve ter no maximo 8MB.");
+      return;
+    }
+
+    const reader = new FileReader();
+    reader.onload = () => {
+      const result = typeof reader.result === "string" ? reader.result : "";
+      if (!result) {
+        setRequiredDocumentError("Nao foi possivel ler o arquivo selecionado.");
+        return;
+      }
+      setDraftRequiredDocument((current) => ({
+        ...current,
+        fileName: file.name,
+        fileUrl: result
+      }));
+      setRequiredDocumentError("");
+    };
+    reader.onerror = () => {
+      setRequiredDocumentError("Nao foi possivel carregar o documento.");
+    };
+    reader.readAsDataURL(file);
   }
 
   function saveDriverLicense() {
@@ -481,6 +646,51 @@ export function DriverProfileEditorComplianceSection({
     setIsPsychotechnicalModalOpen(false);
   }
 
+  function saveRequiredDocument() {
+    if (!draftRequiredDocument.title.trim()) {
+      setRequiredDocumentError("Informe o titulo do documento.");
+      return;
+    }
+    if (!draftRequiredDocument.fileUrl.trim()) {
+      setRequiredDocumentError("Anexe o documento antes de salvar.");
+      return;
+    }
+
+    const status = resolveRequiredDocumentStatus({
+      id: draftRequiredDocument.id || `doc-${Date.now()}`,
+      category: draftRequiredDocument.category,
+      title: draftRequiredDocument.title.trim(),
+      fileName: draftRequiredDocument.fileName.trim(),
+      fileUrl: draftRequiredDocument.fileUrl.trim(),
+      issuedAt: new Date().toISOString().slice(0, 10),
+      expiresAt: draftRequiredDocument.expiresAt || undefined,
+      notes: draftRequiredDocument.notes.trim() || undefined,
+      status: "VALID"
+    });
+
+    const payload: DriverDocument = {
+      id: draftRequiredDocument.id || `doc-${Date.now()}`,
+      category: draftRequiredDocument.category,
+      title: draftRequiredDocument.title.trim(),
+      fileName: draftRequiredDocument.fileName.trim(),
+      fileUrl: draftRequiredDocument.fileUrl.trim(),
+      issuedAt: new Date().toISOString().slice(0, 10),
+      expiresAt: draftRequiredDocument.expiresAt || undefined,
+      notes: draftRequiredDocument.notes.trim() || undefined,
+      status:
+        status === "PENDENTE"
+          ? "PENDING_REVIEW"
+          : status === "VENCIDO"
+            ? "EXPIRED"
+            : "VALID"
+    };
+
+    const withoutCategory = additionalDocuments.filter((item) => item.category !== draftRequiredDocument.category);
+    onAdditionalDocumentsChange([payload, ...withoutCategory]);
+    setIsRequiredDocumentModalOpen(false);
+    setRequiredDocumentError("");
+  }
+
   return (
     <article
       id="driver-editor-compliance"
@@ -536,6 +746,50 @@ export function DriverProfileEditorComplianceSection({
               </button>
             </article>
           </div>
+          <div className="driver-editor-block driver-editor-compliance-required-block">
+            <div className="driver-editor-block-head">
+              <strong>Documentos e pendencias</strong>
+              <p className="helper-text">
+                Itens obrigatorios para liberar o motorista na operacao.
+              </p>
+            </div>
+            <div className="driver-editor-summary-strip driver-editor-compliance-summary-grid">
+              {requiredDocumentCards.map((card) => (
+                <article key={card.category} className="driver-editor-summary-card">
+                  <span>{card.label}</span>
+                  <strong>{card.required ? "Obrigatorio" : "Opcional"}</strong>
+                  <small className={resolveRequiredDocumentStatusClassName(card.status)}>
+                    {resolveRequiredDocumentStatusLabel(card.status)}
+                  </small>
+                  <small>
+                    Validade:{" "}
+                    {card.document?.expiresAt
+                      ? new Date(`${card.document.expiresAt}T00:00:00`).toLocaleDateString("pt-BR")
+                      : "Nao informada"}
+                  </small>
+                  <div className="driver-editor-summary-card-actions">
+                    <button
+                      type="button"
+                      className="secondary"
+                      onClick={() => openRequiredDocumentModal(card.category)}
+                    >
+                      {card.document ? "Editar documento" : "Anexar documento"}
+                    </button>
+                    {card.document?.fileUrl ? (
+                      <a
+                        href={card.document.fileUrl}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="driver-editor-summary-link"
+                      >
+                        Ver documento
+                      </a>
+                    ) : null}
+                  </div>
+                </article>
+              ))}
+            </div>
+          </div>
         </>
       ) : (
         <div className="driver-editor-history-panel">
@@ -555,7 +809,7 @@ export function DriverProfileEditorComplianceSection({
           ) : (
             <div className="empty-state">
               <strong>Nenhum evento de conformidade.</strong>
-              <p>As alteracoes de CNH, exame toxicologico e exame psicotecnico aparecerao aqui.</p>
+              <p>As alteracoes de CNH, exames e documentos obrigatorios aparecerao aqui.</p>
             </div>
           )}
         </div>
@@ -1091,6 +1345,115 @@ export function DriverProfileEditorComplianceSection({
           <div className="driver-editor-modal-field-full driver-editor-modal-status-inline">
             <span>Status de validade calculado automaticamente</span>
             <strong className={resolveComplianceExamStatusClassName(draftPsychotechnicalStatus)}>{draftPsychotechnicalStatusLabel}</strong>
+          </div>
+        </div>
+      </DriverProfileEditorModal>
+
+      <DriverProfileEditorModal
+        open={isRequiredDocumentModalOpen}
+        title="Documento obrigatorio"
+        description="Anexe o documento e informe a validade quando houver."
+        onClose={() => setIsRequiredDocumentModalOpen(false)}
+        footer={
+          <>
+            <button type="button" className="secondary" onClick={() => setIsRequiredDocumentModalOpen(false)}>
+              Cancelar
+            </button>
+            <button type="button" onClick={saveRequiredDocument}>
+              Salvar documento
+            </button>
+          </>
+        }
+      >
+        <div className="form-grid">
+          <label>
+            Categoria do documento
+            <select
+              className="select"
+              value={draftRequiredDocument.category}
+              onChange={(event) =>
+                setDraftRequiredDocument((current) => ({
+                  ...current,
+                  category: event.target.value as DriverDocumentCategory
+                }))
+              }
+            >
+              <option value="IDENTIFICATION">Identificacao</option>
+              <option value="CRIMINAL_RECORD">Antecedentes</option>
+              <option value="RESIDENCE_PROOF">Comprovante de residencia</option>
+              <option value="TRAINING">Treinamento</option>
+              <option value="OTHER">Outros</option>
+            </select>
+          </label>
+          <label>
+            Titulo do documento
+            <input
+              value={draftRequiredDocument.title}
+              onChange={(event) =>
+                setDraftRequiredDocument((current) => ({ ...current, title: event.target.value }))
+              }
+              placeholder="Ex.: Documento de identificacao oficial"
+            />
+          </label>
+          <label>
+            Data de validade (opcional)
+            <input
+              type="date"
+              value={draftRequiredDocument.expiresAt}
+              onChange={(event) =>
+                setDraftRequiredDocument((current) => ({ ...current, expiresAt: event.target.value }))
+              }
+            />
+          </label>
+          <div className="driver-editor-modal-field-full driver-editor-license-photo-field">
+            <span>Anexo</span>
+            <div className="driver-editor-license-photo-row">
+              <div className="driver-editor-license-photo-preview" aria-hidden="true">
+                {draftRequiredDocument.fileUrl ? <strong>DOC</strong> : <strong>PDF</strong>}
+              </div>
+              <div className="driver-editor-license-photo-copy">
+                <p className="helper-text">
+                  {draftRequiredDocument.fileName.trim()
+                    ? draftRequiredDocument.fileName.trim()
+                    : "PDF ou imagem pendente"}
+                </p>
+                <div className="driver-editor-license-photo-actions">
+                  <input
+                    ref={requiredDocumentInputRef}
+                    type="file"
+                    accept="application/pdf,image/*"
+                    onChange={handleRequiredDocumentFileChange}
+                    className="driver-editor-photo-input"
+                  />
+                  <button type="button" className="secondary" onClick={openRequiredDocumentFilePicker}>
+                    {draftRequiredDocument.fileUrl ? "Trocar anexo" : "Anexar documento"}
+                  </button>
+                  {draftRequiredDocument.fileUrl ? (
+                    <button type="button" className="secondary" onClick={clearRequiredDocumentFile}>
+                      Remover
+                    </button>
+                  ) : null}
+                </div>
+                {requiredDocumentError ? <small className="driver-editor-photo-error">{requiredDocumentError}</small> : null}
+              </div>
+            </div>
+          </div>
+          <label className="driver-editor-modal-field-full">
+            Observacoes (opcional)
+            <textarea
+              rows={3}
+              value={draftRequiredDocument.notes}
+              onChange={(event) =>
+                setDraftRequiredDocument((current) => ({ ...current, notes: event.target.value }))
+              }
+              placeholder="Observacoes internas sobre o documento."
+            />
+          </label>
+          <div className="driver-editor-modal-field-full driver-editor-modal-status-inline">
+            <span>Status calculado automaticamente</span>
+            <strong className={resolveRequiredDocumentStatusClassName(draftRequiredDocumentStatus)}>
+              {resolveRequiredDocumentStatusLabel(draftRequiredDocumentStatus)}
+            </strong>
           </div>
         </div>
       </DriverProfileEditorModal>

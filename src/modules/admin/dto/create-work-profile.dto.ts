@@ -6,7 +6,10 @@ import {
   IsObject,
   IsOptional,
   IsString,
+  IsInt,
   MaxLength,
+  Max,
+  Min,
   MinLength
 } from "class-validator";
 import { Transform } from "class-transformer";
@@ -27,9 +30,9 @@ export class CreateWorkProfileDto {
   isActive?: boolean;
 
   @IsString()
-  @MinLength(2)
+  @MinLength(3)
   @MaxLength(120)
-  cargoName!: string;
+  cargoId!: string;
 
   @IsOptional()
   @Transform(({ value }) =>
@@ -80,6 +83,44 @@ export class CreateWorkProfileDto {
   overtimeSummary?: string;
 
   @IsOptional()
+  @IsBoolean()
+  usesNightPolicy?: boolean;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(120)
+  nightTemplateId?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(120)
+  nightTemplateName?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(2000)
+  nightSummary?: string;
+
+  @IsOptional()
+  @IsIn(["NATIONAL", "STATE", "CITY"])
+  holidayScopeType?: "NATIONAL" | "STATE" | "CITY";
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(2)
+  holidayStateCode?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(120)
+  holidayCityCode?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(2000)
+  holidaySummary?: string;
+
+  @IsOptional()
   @IsArray()
   @ArrayMaxSize(100)
   @IsObject({ each: true })
@@ -96,4 +137,16 @@ export class CreateWorkProfileDto {
   @IsOptional()
   @IsBoolean()
   allowBenefitsCustomization?: boolean;
+
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  @Max(180)
+  toleranceMarkingMinutes?: number;
+
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  @Max(600)
+  toleranceDailyMaxMinutes?: number;
 }

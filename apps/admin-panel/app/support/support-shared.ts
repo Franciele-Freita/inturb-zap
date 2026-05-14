@@ -1,405 +1,470 @@
-export type SupportCaseStatus = "NEW" | "IN_PROGRESS" | "WAITING" | "RESOLVED";
-export type SupportCaseType = "CUSTOMER" | "DRIVER" | "RIDE" | "OPERATIONAL";
-export type SupportCasePriority = "LOW" | "MEDIUM" | "HIGH" | "CRITICAL";
+﻿export type SupportTicketType = "RIDE" | "CUSTOMER" | "DRIVER" | "INTERNAL";
+export type SupportTicketPriority = "CRITICAL" | "HIGH" | "MEDIUM" | "LOW";
+export type SupportTicketStatus =
+  | "NEW"
+  | "IN_ANALYSIS"
+  | "WAITING_CUSTOMER"
+  | "WAITING_DRIVER"
+  | "ESCALATED"
+  | "RESOLVED"
+  | "CANCELLED";
 
-export type SupportCaseContact = {
+export type SupportTimelineEventType =
+  | "TICKET_CREATED"
+  | "STATUS_CHANGED"
+  | "PRIORITY_CHANGED"
+  | "ASSIGNEE_CHANGED"
+  | "INTERNAL_NOTE_CREATED"
+  | "RESPONSE_SENT"
+  | "ESCALATED"
+  | "RESOLVED"
+  | "QUICK_ACTION";
+
+export type SupportMessageChannel = "WHATSAPP" | "DRIVER_APP" | "EMAIL" | "INTERNAL";
+export type SupportTypeFilter = "ALL" | SupportTicketType;
+
+export type SupportRequester = {
+  id?: string;
   name: string;
   phone?: string;
-  note?: string;
-  href?: string;
 };
 
-export type SupportCaseRide = {
+export type SupportTimelineEvent = {
+  id: string;
+  type: SupportTimelineEventType;
+  description: string;
+  actor: string;
+  createdAt: string;
+};
+
+export type SupportInternalNote = {
+  id: string;
+  author: string;
+  content: string;
+  createdAt: string;
+};
+
+export type SupportResponseMessage = {
+  id: string;
+  channel: SupportMessageChannel;
+  content: string;
+  author: string;
+  createdAt: string;
+};
+
+export type SupportRelatedRide = {
   id: string;
   status: string;
   origin: string;
   destination: string;
+  fareAmount?: number;
+  paymentMethod?: string;
   scheduledAt: string;
-  href?: string;
 };
 
-export type SupportCaseTimelineEntry = {
+export type SupportRelatedDriver = {
   id: string;
-  title: string;
-  detail: string;
-  at: string;
-  tone?: "neutral" | "positive" | "warning" | "danger";
+  name: string;
+  phone?: string;
+  status?: string;
+  vehicleLabel?: string;
+  documentsState?: string;
+  operationHistory?: string;
 };
 
-export type SupportCase = {
+export type SupportRelatedCustomer = {
   id: string;
-  ticketNumber: string;
+  name: string;
+  phone?: string;
+  recentRides?: number;
+  refundsCount?: number;
+  previousComplaints?: number;
+};
+
+export type SupportInternalContext = {
+  module: string;
+  severity: "LOW" | "MEDIUM" | "HIGH" | "CRITICAL";
+  ownerArea: string;
+};
+
+export type SupportTicket = {
+  id: string;
+  code: string;
+  type: SupportTicketType;
   title: string;
   summary: string;
-  type: SupportCaseType;
-  status: SupportCaseStatus;
-  priority: SupportCasePriority;
+  description: string;
+  status: SupportTicketStatus;
+  priority: SupportTicketPriority;
+  assignee?: string;
+  requester: SupportRequester;
+  relatedRideId?: string;
+  relatedDriverId?: string;
+  relatedCustomerId?: string;
   source: string;
-  openedAt: string;
-  dueAt: string;
+  createdAt: string;
   updatedAt: string;
-  assignedTo?: string;
-  reason: string;
-  customer?: SupportCaseContact;
-  driver?: SupportCaseContact;
-  ride?: SupportCaseRide;
-  internalNotes: string[];
-  nextAction: string;
-  timeline: SupportCaseTimelineEntry[];
+  dueAt: string;
+  resolvedAt?: string;
+  nextAction?: string;
+  tags: string[];
+  timeline: SupportTimelineEvent[];
+  internalNotes: SupportInternalNote[];
+  responses: SupportResponseMessage[];
+  relatedRide?: SupportRelatedRide;
+  relatedDriver?: SupportRelatedDriver;
+  relatedCustomer?: SupportRelatedCustomer;
+  internalContext?: SupportInternalContext;
 };
 
-export const supportStatusOrder: SupportCaseStatus[] = ["NEW", "IN_PROGRESS", "WAITING", "RESOLVED"];
+export const supportTypeFilterOrder: SupportTypeFilter[] = ["ALL", "RIDE", "CUSTOMER", "DRIVER", "INTERNAL"];
 
-export const supportStatusMeta: Record<SupportCaseStatus, { label: string; description: string }> = {
-  NEW: {
-    label: "Novo",
-    description: "Casos que acabaram de entrar na fila."
+export const supportTypeMeta: Record<
+  SupportTypeFilter,
+  { label: string; icon: string; description: string; badgeClassName: string }
+> = {
+  ALL: { label: "Todos", icon: "#", description: "Fila unica", badgeClassName: "badge-neutral" },
+  RIDE: { label: "Corrida", icon: "RD", description: "Viagens", badgeClassName: "badge-warning" },
+  CUSTOMER: { label: "Cliente", icon: "CL", description: "Clientes", badgeClassName: "badge-neutral" },
+  DRIVER: { label: "Motorista", icon: "MT", description: "Motoristas", badgeClassName: "badge-success" },
+  INTERNAL: { label: "Interno", icon: "IN", description: "Interno", badgeClassName: "badge-danger" }
+};
+
+export const supportStatusMeta: Record<
+  SupportTicketStatus,
+  { label: string; description: string; badgeClassName: string }
+> = {
+  NEW: { label: "Novo", description: "Aguardando triagem.", badgeClassName: "badge-neutral" },
+  IN_ANALYSIS: { label: "Em analise", description: "Em atendimento.", badgeClassName: "badge-neutral" },
+  WAITING_CUSTOMER: { label: "Aguardando cliente", description: "Pendente cliente.", badgeClassName: "badge-neutral" },
+  WAITING_DRIVER: { label: "Aguardando motorista", description: "Pendente motorista.", badgeClassName: "badge-neutral" },
+  ESCALATED: { label: "Escalado", description: "Escalado por risco/SLA.", badgeClassName: "badge-danger" },
+  RESOLVED: { label: "Resolvido", description: "Concluido.", badgeClassName: "badge-success" },
+  CANCELLED: { label: "Cancelado", description: "Encerrado sem resolucao.", badgeClassName: "badge-neutral" }
+};
+
+export const supportStatusTransitions: Record<SupportTicketStatus, SupportTicketStatus[]> = {
+  NEW: ["IN_ANALYSIS", "CANCELLED"],
+  IN_ANALYSIS: ["WAITING_CUSTOMER", "WAITING_DRIVER", "ESCALATED", "RESOLVED", "CANCELLED"],
+  WAITING_CUSTOMER: ["IN_ANALYSIS", "ESCALATED", "RESOLVED", "CANCELLED"],
+  WAITING_DRIVER: ["IN_ANALYSIS", "ESCALATED", "RESOLVED", "CANCELLED"],
+  ESCALATED: ["IN_ANALYSIS", "RESOLVED", "CANCELLED"],
+  RESOLVED: [],
+  CANCELLED: []
+};
+
+export const supportPriorityMeta: Record<
+  SupportTicketPriority,
+  { label: string; badgeClassName: string; description: string; rank: number }
+> = {
+  CRITICAL: {
+    label: "Critica",
+    badgeClassName: "badge-danger",
+    description: "Dinheiro, corrida ativa, repasse e seguranca.",
+    rank: 4
   },
-  IN_PROGRESS: {
-    label: "Em atendimento",
-    description: "Ocorrencias com operador atuando agora."
+  HIGH: {
+    label: "Alta",
+    badgeClassName: "badge-warning",
+    description: "Impedimento operacional.",
+    rank: 3
   },
-  WAITING: {
-    label: "Aguardando retorno",
-    description: "Casos pausados esperando resposta externa."
+  MEDIUM: {
+    label: "Media",
+    badgeClassName: "badge-info",
+    description: "Solicitacao comum.",
+    rank: 2
   },
-  RESOLVED: {
-    label: "Resolvido",
-    description: "Atendimentos encerrados e registrados."
+  LOW: {
+    label: "Baixa",
+    badgeClassName: "badge-neutral",
+    description: "Baixa urgencia.",
+    rank: 1
   }
 };
 
-export const supportTypeLabel: Record<SupportCaseType, string> = {
-  CUSTOMER: "Cliente",
-  DRIVER: "Motorista",
-  RIDE: "Corrida",
-  OPERATIONAL: "Operacional"
+export const supportMessageChannelMeta: Record<SupportMessageChannel, { label: string }> = {
+  WHATSAPP: { label: "WhatsApp" },
+  DRIVER_APP: { label: "Aplicativo" },
+  EMAIL: { label: "E-mail" },
+  INTERNAL: { label: "Interno" }
 };
 
-export const supportPriorityLabel: Record<SupportCasePriority, string> = {
-  LOW: "Baixa",
-  MEDIUM: "Media",
-  HIGH: "Alta",
-  CRITICAL: "Critica"
+export const supportSlaMinutesByPriority: Record<SupportTicketPriority, number> = {
+  CRITICAL: 15,
+  HIGH: 30,
+  MEDIUM: 120,
+  LOW: 1440
 };
 
-export const mockSupportCases: SupportCase[] = [
+export const supportQuickActionsByType: Record<
+  SupportTicketType,
+  Array<{ key: string; label: string; outcome?: "ESCALATED" | "RESOLVED" }>
+> = {
+  RIDE: [
+    { key: "OPEN_RIDE_DETAILS", label: "Ver detalhes da corrida" },
+    { key: "CHECK_PAYMENT", label: "Conferir pagamento" },
+    { key: "CHECK_REPASSE", label: "Conferir repasse" },
+    { key: "REPROCESS_PAYMENT", label: "Reprocessar pagamento", outcome: "ESCALATED" },
+    { key: "ESCALATE_FINANCE", label: "Escalar para financeiro", outcome: "ESCALATED" },
+    { key: "RESOLVE_FIXED", label: "Resolver como corrigido", outcome: "RESOLVED" }
+  ],
+  DRIVER: [
+    { key: "OPEN_DRIVER_PROFILE", label: "Ver perfil do motorista" },
+    { key: "OPEN_DRIVER_DOCUMENTS", label: "Ver documentos" },
+    { key: "OPEN_DRIVER_VEHICLE", label: "Ver veiculo" },
+    { key: "CHECK_DRIVER_REPASSE", label: "Conferir repasse" },
+    { key: "ESCALATE_OPERATIONS", label: "Escalar para operacao", outcome: "ESCALATED" },
+    { key: "RESPOND_DRIVER", label: "Responder motorista" }
+  ],
+  CUSTOMER: [
+    { key: "OPEN_CUSTOMER_PROFILE", label: "Ver perfil do cliente" },
+    { key: "OPEN_RELATED_RIDE", label: "Ver corrida relacionada" },
+    { key: "CHECK_CHARGE", label: "Conferir cobranca" },
+    { key: "APPLY_REFUND", label: "Aplicar reembolso", outcome: "ESCALATED" },
+    { key: "RESPOND_CUSTOMER", label: "Responder cliente" },
+    { key: "ESCALATE_FINANCE", label: "Escalar para financeiro", outcome: "ESCALATED" }
+  ],
+  INTERNAL: [
+    { key: "LINK_MODULE", label: "Vincular modulo" },
+    { key: "SET_OWNER_AREA", label: "Definir area responsavel" },
+    { key: "SET_SEVERITY", label: "Definir severidade" },
+    { key: "CREATE_INTERNAL_TASK", label: "Criar tarefa interna" },
+    { key: "MARK_RESOLVED", label: "Marcar como resolvido", outcome: "RESOLVED" }
+  ]
+};
+
+export const supportResponseTemplates: Record<
+  SupportTicketType,
+  Array<{ key: string; label: string; message: string }>
+> = {
+  DRIVER: [
+    {
+      key: "driver-repasse-divergence",
+      label: "Divergencia de repasse",
+      message:
+        "Ola, estamos conferindo os valores da corrida e o calculo do repasse. Assim que validarmos, retornaremos com a atualizacao."
+    }
+  ],
+  CUSTOMER: [
+    {
+      key: "customer-charge-review",
+      label: "Cobranca indevida",
+      message:
+        "Ola, identificamos sua solicitacao e vamos conferir a cobranca vinculada a corrida. Caso seja confirmado erro, seguiremos com o ajuste."
+    },
+    {
+      key: "customer-ride-cancelled",
+      label: "Corrida cancelada",
+      message:
+        "Ola, estamos verificando o motivo do cancelamento e se houve cobranca ou impacto no repasse."
+    }
+  ],
+  RIDE: [
+    {
+      key: "ride-cancelled",
+      label: "Corrida cancelada",
+      message: "Ola, estamos verificando o motivo do cancelamento e o historico operacional dessa corrida."
+    }
+  ],
+  INTERNAL: [
+    {
+      key: "internal-escalation",
+      label: "Escalada interna",
+      message: "Incidente registrado e encaminhado para a area responsavel com prioridade operacional."
+    }
+  ]
+};
+
+function minAgo(minutes: number): string {
+  return new Date(Date.now() - minutes * 60_000).toISOString();
+}
+
+function buildDueAt(createdAt: string, priority: SupportTicketPriority): string {
+  return resolveSlaDueAtByPriority(createdAt, priority);
+}
+
+const created1 = minAgo(18);
+const created2 = minAgo(35);
+const created3 = minAgo(70);
+
+export const mockSupportTickets: SupportTicket[] = [
   {
     id: "support-101",
-    ticketNumber: "SUP-20260317-0101",
-    title: "Duvida sobre corrida cancelada",
-    summary: "Cliente relata que a corrida foi cancelada e quer entender se havera nova tentativa de envio.",
-    type: "CUSTOMER",
+    code: "SUP-20260430-0101",
+    type: "RIDE",
+    title: "Corrida cancelada sem retorno ao cliente",
+    summary: "Cliente reporta cancelamento sem novo envio.",
+    description: "Necessario validar cancelamento e tratativa de reenvio.",
     status: "NEW",
     priority: "HIGH",
+    requester: { id: "5527995330712", name: "Franciele Bungenstab", phone: "5527995330712" },
+    relatedRideId: "ride_3281",
+    relatedDriverId: "drv_001",
+    relatedCustomerId: "5527995330712",
     source: "WhatsApp",
-    openedAt: "2026-03-17T08:12:00.000Z",
-    dueAt: "2026-03-17T09:00:00.000Z",
-    updatedAt: "2026-03-17T08:19:00.000Z",
-    reason: "Corrida cancelada sem retorno automatico",
-    customer: {
-      name: "Franciele Bungenstab de Freita",
-      phone: "5527995330712",
-      note: "Cliente nova com score 50",
-      href: "/customers"
-    },
-    driver: {
-      name: "Clovis Ricardo Dias Junior",
-      phone: "552799990001",
-      note: "Motorista vinculado na ultima tentativa",
-      href: "/drivers"
-    },
-    ride: {
+    createdAt: created1,
+    updatedAt: minAgo(10),
+    dueAt: buildDueAt(created1, "HIGH"),
+    nextAction: "Solicitar confirmacao da cliente para nova tentativa.",
+    tags: ["cancelamento", "corrida"],
+    timeline: [
+      {
+        id: "timeline-101-1",
+        type: "TICKET_CREATED",
+        description: "Ticket criado automaticamente apos fallback do bot.",
+        actor: "Sistema",
+        createdAt: created1
+      }
+    ],
+    internalNotes: [],
+    responses: [],
+    relatedRide: {
       id: "ride_3281",
       status: "CANCELLED",
       origin: "Jardim Camburi",
       destination: "Aeroporto de Vitoria",
-      scheduledAt: "2026-03-17T08:00:00.000Z",
-      href: "/rides"
-    },
-    internalNotes: [
-      "Validar se houve cancelamento pelo motorista ou expiracao da janela.",
-      "Confirmar com a cliente se deseja reabrir a solicitacao."
-    ],
-    nextAction: "Retornar para a cliente com orientacao e, se necessario, recriar o atendimento operacional da corrida.",
-    timeline: [
-      {
-        id: "support-101-1",
-        title: "Caso criado",
-        detail: "Atendimento aberto automaticamente a partir da conversa com a cliente.",
-        at: "2026-03-17T08:12:00.000Z",
-        tone: "neutral"
-      },
-      {
-        id: "support-101-2",
-        title: "Mensagem recebida",
-        detail: "Cliente informou que ficou sem retorno apos o cancelamento.",
-        at: "2026-03-17T08:15:00.000Z",
-        tone: "warning"
-      },
-      {
-        id: "support-101-3",
-        title: "Fila priorizada",
-        detail: "Caso marcado como alta prioridade por impactar solicitacao ativa.",
-        at: "2026-03-17T08:19:00.000Z",
-        tone: "warning"
-      }
-    ]
+      fareAmount: 42.5,
+      paymentMethod: "PIX",
+      scheduledAt: minAgo(30)
+    }
   },
   {
     id: "support-102",
-    ticketNumber: "SUP-20260317-0102",
-    title: "Motorista sem veiculo operacional",
-    summary: "Perfil segue ativo, mas nao ha nenhum veiculo marcado como operacional no cadastro.",
+    code: "SUP-20260430-0102",
     type: "DRIVER",
-    status: "IN_PROGRESS",
-    priority: "HIGH",
-    source: "Painel admin",
-    openedAt: "2026-03-17T07:40:00.000Z",
-    dueAt: "2026-03-17T08:40:00.000Z",
-    updatedAt: "2026-03-17T08:05:00.000Z",
-    assignedTo: "Ana Paula",
-    reason: "Cadastro inconsistene entre perfil e frota",
-    driver: {
-      name: "Mateus Fernandes",
-      phone: "5527999554400",
-      note: "Motorista ativo sem veiculo em operacao",
-      href: "/drivers"
-    },
-    internalNotes: [
-      "Solicitar confirmacao da placa operacional antes de reativar a disponibilidade.",
-      "Revisar se houve troca recente de veiculo nao concluida no cadastro."
-    ],
-    nextAction: "Atualizar o cadastro do motorista com o veiculo operacional correto e confirmar disponibilidade.",
+    title: "Divergencia de repasse",
+    summary: "Motorista questiona valor do repasse.",
+    description: "Possivel impacto financeiro no extrato.",
+    status: "IN_ANALYSIS",
+    priority: "CRITICAL",
+    assignee: "Ana Paula",
+    requester: { id: "drv_001", name: "Clovis Ricardo Dias Junior", phone: "552799990001" },
+    relatedRideId: "ride_3280",
+    relatedDriverId: "drv_001",
+    source: "WhatsApp",
+    createdAt: created2,
+    updatedAt: minAgo(20),
+    dueAt: buildDueAt(created2, "CRITICAL"),
+    nextAction: "Escalar para financeiro com memorial.",
+    tags: ["repasse", "financeiro"],
     timeline: [
       {
-        id: "support-102-1",
-        title: "Alerta operacional",
-        detail: "Sistema encontrou motorista ativo sem veiculo operacional.",
-        at: "2026-03-17T07:40:00.000Z",
-        tone: "danger"
-      },
-      {
-        id: "support-102-2",
-        title: "Responsavel definido",
-        detail: "Ana Paula assumiu o atendimento e iniciou validacao cadastral.",
-        at: "2026-03-17T07:48:00.000Z",
-        tone: "neutral"
-      },
-      {
-        id: "support-102-3",
-        title: "Contato com motorista",
-        detail: "Motorista informou troca de carro ainda nao refletida no painel.",
-        at: "2026-03-17T08:05:00.000Z",
-        tone: "positive"
+        id: "timeline-102-1",
+        type: "TICKET_CREATED",
+        description: "Ticket criado por mensagem do motorista.",
+        actor: "Sistema",
+        createdAt: created2
       }
-    ]
+    ],
+    internalNotes: [],
+    responses: []
   },
   {
     id: "support-103",
-    ticketNumber: "SUP-20260317-0103",
-    title: "Corrida expirada aguardando retorno da cliente",
-    summary: "Caso de pre-agendamento expirado que exige confirmar se a passageira ainda deseja atendimento.",
-    type: "RIDE",
-    status: "WAITING",
-    priority: "MEDIUM",
-    source: "Operacao",
-    openedAt: "2026-03-17T06:55:00.000Z",
-    dueAt: "2026-03-17T07:55:00.000Z",
-    updatedAt: "2026-03-17T07:22:00.000Z",
-    assignedTo: "Operacao Manha",
-    reason: "Expiracao da janela de aceite",
-    customer: {
-      name: "Luciana Souza",
-      phone: "5527999651288",
-      href: "/customers"
-    },
-    ride: {
-      id: "ride_3274",
-      status: "EXPIRED",
-      origin: "Praia do Canto",
-      destination: "Rodoviaria de Vitoria",
-      scheduledAt: "2026-03-17T07:10:00.000Z",
-      href: "/rides"
-    },
-    internalNotes: [
-      "A cliente pediu retorno antes de gerar nova tentativa.",
-      "Caso pode voltar para novo se houver confirmacao de interesse."
-    ],
-    nextAction: "Aguardar confirmacao da cliente para decidir entre reabrir a corrida ou encerrar o caso.",
-    timeline: [
-      {
-        id: "support-103-1",
-        title: "Corrida expirou",
-        detail: "Nenhum motorista aceitou dentro da janela prevista.",
-        at: "2026-03-17T06:55:00.000Z",
-        tone: "warning"
-      },
-      {
-        id: "support-103-2",
-        title: "Tentativa de contato",
-        detail: "Mensagem enviada para a cliente explicando a expiracao e propondo nova tentativa.",
-        at: "2026-03-17T07:10:00.000Z",
-        tone: "neutral"
-      },
-      {
-        id: "support-103-3",
-        title: "Caso pausado",
-        detail: "Atendimento movido para aguardando retorno.",
-        at: "2026-03-17T07:22:00.000Z",
-        tone: "neutral"
-      }
-    ]
-  },
-  {
-    id: "support-104",
-    ticketNumber: "SUP-20260316-0098",
-    title: "Score ajustado apos revisao cadastral",
-    summary: "Cliente questionou pontuacao inicial e recebeu explicacao sobre cadastro novo e ausencia de corridas.",
+    code: "SUP-20260430-0103",
     type: "CUSTOMER",
-    status: "RESOLVED",
-    priority: "LOW",
-    source: "Manual",
-    openedAt: "2026-03-16T18:20:00.000Z",
-    dueAt: "2026-03-16T19:20:00.000Z",
-    updatedAt: "2026-03-16T18:52:00.000Z",
-    assignedTo: "Juliana",
-    reason: "Duvida sobre score e tier do cliente",
-    customer: {
-      name: "Renata Lima",
-      phone: "5527999448811",
-      note: "Cliente novo sem corridas finalizadas",
-      href: "/customers"
-    },
-    internalNotes: [
-      "Nao houve ajuste manual no score; apenas orientacao.",
-      "Cliente entendeu a regra de pontuacao inicial."
-    ],
-    nextAction: "Sem acao pendente.",
-    timeline: [
-      {
-        id: "support-104-1",
-        title: "Caso aberto manualmente",
-        detail: "Operadora registrou a duvida de score enviada por telefone.",
-        at: "2026-03-16T18:20:00.000Z",
-        tone: "neutral"
-      },
-      {
-        id: "support-104-2",
-        title: "Explicacao enviada",
-        detail: "Cliente recebeu detalhamento da composicao do score inicial.",
-        at: "2026-03-16T18:36:00.000Z",
-        tone: "positive"
-      },
-      {
-        id: "support-104-3",
-        title: "Atendimento encerrado",
-        detail: "Sem pendencias adicionais registradas.",
-        at: "2026-03-16T18:52:00.000Z",
-        tone: "positive"
-      }
-    ]
-  },
-  {
-    id: "support-105",
-    ticketNumber: "SUP-20260317-0104",
-    title: "Divergencia de repasse apos corrida finalizada",
-    summary: "Motorista informou que o valor esperado do repasse nao bate com o fechamento visto no painel.",
-    type: "DRIVER",
-    status: "NEW",
-    priority: "CRITICAL",
-    source: "WhatsApp",
-    openedAt: "2026-03-17T08:02:00.000Z",
-    dueAt: "2026-03-17T08:45:00.000Z",
-    updatedAt: "2026-03-17T08:18:00.000Z",
-    reason: "Questionamento financeiro pos-corrida",
-    driver: {
-      name: "Clovis Ricardo Dias Junior",
-      phone: "552799990001",
-      note: "Repasse esperado de 25%",
-      href: "/drivers"
-    },
-    ride: {
-      id: "ride_3280",
-      status: "COMPLETED",
-      origin: "Centro de Vitoria",
-      destination: "Mata da Praia",
-      scheduledAt: "2026-03-17T07:15:00.000Z",
-      href: "/rides"
-    },
-    internalNotes: [
-      "Validar se a corrida usou regra global ou regra personalizada do motorista.",
-      "Escalar para financeiro se houver divergencia real no fechamento."
-    ],
-    nextAction: "Revisar a configuracao de repasse aplicada na corrida e retornar ao motorista com o calculo detalhado.",
-    timeline: [
-      {
-        id: "support-105-1",
-        title: "Mensagem do motorista",
-        detail: "Motorista questionou o valor visualizado logo apos a finalizacao.",
-        at: "2026-03-17T08:02:00.000Z",
-        tone: "warning"
-      },
-      {
-        id: "support-105-2",
-        title: "Caso sinalizado",
-        detail: "Ocorrencia financeira marcada como critica por impacto em repasse.",
-        at: "2026-03-17T08:18:00.000Z",
-        tone: "danger"
-      }
-    ]
-  },
-  {
-    id: "support-106",
-    ticketNumber: "SUP-20260317-0105",
-    title: "Falha de login no app do motorista",
-    summary: "Motorista ativo nao consegue concluir o login e relata erro logo apos informar telefone.",
-    type: "OPERATIONAL",
-    status: "IN_PROGRESS",
+    title: "Cobranca em analise",
+    summary: "Cliente solicita conferencia de cobranca.",
+    description: "Validar transacao e regra de cancelamento.",
+    status: "WAITING_CUSTOMER",
     priority: "MEDIUM",
-    source: "Telefone",
-    openedAt: "2026-03-17T07:12:00.000Z",
-    dueAt: "2026-03-17T08:12:00.000Z",
-    updatedAt: "2026-03-17T07:39:00.000Z",
-    assignedTo: "Rafael",
-    reason: "Acesso bloqueado no app do motorista",
-    driver: {
-      name: "Paulo Roberto Gomes",
-      phone: "5527999332201",
-      note: "Perfil ativo com push cadastrado",
-      href: "/drivers"
-    },
-    internalNotes: [
-      "Verificar se o app esta com cache antigo ou se houve alteracao de versao.",
-      "Validar o estado do cadastro do motorista antes de resetar acesso."
-    ],
-    nextAction: "Testar novo fluxo de login com o motorista e registrar a causa raiz do erro.",
+    assignee: "Rafael",
+    requester: { id: "5527999651288", name: "Luciana Souza", phone: "5527999651288" },
+    relatedCustomerId: "5527999651288",
+    source: "App Cliente",
+    createdAt: created3,
+    updatedAt: minAgo(15),
+    dueAt: buildDueAt(created3, "MEDIUM"),
+    nextAction: "Aguardar comprovante da cliente.",
+    tags: ["cobranca", "cliente"],
     timeline: [
       {
-        id: "support-106-1",
-        title: "Contato inicial",
-        detail: "Motorista informou falha no acesso durante a primeira tentativa da manha.",
-        at: "2026-03-17T07:12:00.000Z",
-        tone: "warning"
-      },
-      {
-        id: "support-106-2",
-        title: "Triagem tecnica",
-        detail: "Suporte orientou limpeza local e validacao de versao do app.",
-        at: "2026-03-17T07:27:00.000Z",
-        tone: "neutral"
-      },
-      {
-        id: "support-106-3",
-        title: "Reproducao parcial",
-        detail: "Erro ocorre apenas em um aparelho especifico e segue em analise.",
-        at: "2026-03-17T07:39:00.000Z",
-        tone: "neutral"
+        id: "timeline-103-1",
+        type: "TICKET_CREATED",
+        description: "Solicitacao registrada pelo app do cliente.",
+        actor: "Sistema",
+        createdAt: created3
       }
-    ]
+    ],
+    internalNotes: [],
+    responses: []
   }
 ];
 
-export function getSupportCaseById(caseId: string): SupportCase | undefined {
-  return mockSupportCases.find((supportCase) => supportCase.id === caseId);
+export function buildDriverSupportHref(ticket: SupportTicket): string | null {
+  if (!ticket.relatedDriverId) return null;
+  return `/drivers/${encodeURIComponent(ticket.relatedDriverId)}?fromTicket=${encodeURIComponent(ticket.id)}`;
+}
+
+export function buildRideSupportHref(ticket: SupportTicket): string | null {
+  if (!ticket.relatedRideId) return null;
+  return `/rides/${encodeURIComponent(ticket.relatedRideId)}?fromTicket=${encodeURIComponent(ticket.id)}`;
+}
+
+export function buildCustomerSupportHref(ticket: SupportTicket): string | null {
+  if (!ticket.relatedCustomerId) return null;
+  return `/customers/${encodeURIComponent(ticket.relatedCustomerId)}?fromTicket=${encodeURIComponent(ticket.id)}`;
+}
+
+export function isTicketOpen(ticket: SupportTicket): boolean {
+  return ticket.status !== "RESOLVED" && ticket.status !== "CANCELLED";
+}
+
+export function resolveSlaDueAtByPriority(createdAt: string, priority: SupportTicketPriority): string {
+  return new Date(new Date(createdAt).getTime() + supportSlaMinutesByPriority[priority] * 60 * 1000).toISOString();
+}
+
+export function resolveSlaView(ticket: SupportTicket): {
+  dueAtLabel: string;
+  statusLabel: string;
+  risk: "ok" | "warning" | "danger";
+  isOverdue: boolean;
+} {
+  const now = Date.now();
+  const dueAtMs = new Date(ticket.dueAt).getTime();
+  const remainingMs = dueAtMs - now;
+  const remainingMinutes = Math.ceil(Math.abs(remainingMs) / 60000);
+  const warningThreshold = Math.max(5, Math.floor(supportSlaMinutesByPriority[ticket.priority] * 0.25));
+
+  if (remainingMs < 0) {
+    return {
+      dueAtLabel: new Date(ticket.dueAt).toLocaleString("pt-BR"),
+      statusLabel: `Atrasado ha ${remainingMinutes} min`,
+      risk: "danger",
+      isOverdue: true
+    };
+  }
+
+  if (remainingMinutes <= warningThreshold) {
+    return {
+      dueAtLabel: new Date(ticket.dueAt).toLocaleString("pt-BR"),
+      statusLabel: `${remainingMinutes} min restantes`,
+      risk: "warning",
+      isOverdue: false
+    };
+  }
+
+  return {
+    dueAtLabel: new Date(ticket.dueAt).toLocaleString("pt-BR"),
+    statusLabel: "Dentro do prazo",
+    risk: "ok",
+    isOverdue: false
+  };
+}
+
+export function getSlaRiskClassName(risk: "ok" | "warning" | "danger"): string {
+  if (risk === "danger") return "support-sla-pill is-danger";
+  if (risk === "warning") return "support-sla-pill is-warning";
+  return "support-sla-pill is-ok";
+}
+
+export function filterSupportTickets(tickets: SupportTicket[], query: string): SupportTicket[] {
+  const normalized = query.trim().toLowerCase();
+  if (!normalized) return tickets;
+  return tickets.filter(t => 
+    t.code.toLowerCase().includes(normalized) || 
+    t.title.toLowerCase().includes(normalized) ||
+    t.requester.name.toLowerCase().includes(normalized)
+  );
 }

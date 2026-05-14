@@ -2,8 +2,9 @@
 
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
-import { WorkProfile, formatCurrency, formatDateTime, request } from "../lib/api";
+import { WorkProfile, formatCurrency, request } from "../lib/api";
 import { AdminTableRowActions } from "./admin-table-row-actions";
+import { AdministrativeListPagination } from "./administrative-list-pagination";
 import { SearchIcon } from "./icons/common-icons";
 
 type StatusFilter = "ALL" | "ACTIVE" | "INACTIVE";
@@ -13,6 +14,8 @@ export function WorkProfilesPage() {
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
   const [searchTerm, setSearchTerm] = useState("");
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("ALL");
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState<number>(10);
   const [pendingId, setPendingId] = useState<string | null>(null);
 
   useEffect(() => {
@@ -71,6 +74,20 @@ export function WorkProfilesPage() {
       return matchesSearch && matchesStatus;
     });
   }, [profiles, searchTerm, statusFilter]);
+  const totalPages = useMemo(
+    () => Math.max(1, Math.ceil(filteredProfiles.length / pageSize)),
+    [filteredProfiles.length, pageSize]
+  );
+  const paginatedProfiles = useMemo(() => {
+    const start = (page - 1) * pageSize;
+    return filteredProfiles.slice(start, start + pageSize);
+  }, [filteredProfiles, page, pageSize]);
+
+  useEffect(() => {
+    if (page > totalPages) {
+      setPage(totalPages);
+    }
+  }, [page, totalPages]);
 
   const activeCount = useMemo(() => profiles.filter((profile) => profile.isActive).length, [profiles]);
   const inactiveCount = Math.max(profiles.length - activeCount, 0);
@@ -90,6 +107,7 @@ export function WorkProfilesPage() {
             onClick={() => {
               setSearchTerm("");
               setStatusFilter("ALL");
+              setPage(1);
               setStatusMessage(null);
             }}
           >
@@ -116,7 +134,10 @@ export function WorkProfilesPage() {
               <label className="admin-header-search drivers-inline-search">
                 <input
                   value={searchTerm}
-                  onChange={(event) => setSearchTerm(event.target.value)}
+                  onChange={(event) => {
+                    setSearchTerm(event.target.value);
+                    setPage(1);
+                  }}
                   placeholder="Buscar por nome, cargo, jornada ou descricao..."
                 />
                 <span className="admin-header-search-icon" aria-hidden="true">
@@ -126,7 +147,10 @@ export function WorkProfilesPage() {
               <select
                 className={hasActiveFilters ? "select drivers-filter-toggle is-active" : "select drivers-filter-toggle"}
                 value={statusFilter}
-                onChange={(event) => setStatusFilter(event.target.value as StatusFilter)}
+                onChange={(event) => {
+                  setStatusFilter(event.target.value as StatusFilter);
+                  setPage(1);
+                }}
               >
                 <option value="ALL">Todos</option>
                 <option value="ACTIVE">Ativos</option>
@@ -145,12 +169,11 @@ export function WorkProfilesPage() {
                   <th>Pagamento</th>
                   <th>Beneficios</th>
                   <th>Status</th>
-                  <th>Atualizacao</th>
                   <th>Acoes</th>
                 </tr>
               </thead>
               <tbody>
-                {filteredProfiles.map((profile) => (
+                {paginatedProfiles.map((profile) => (
                   <tr key={profile.id}>
                     <td>
                       <div className="table-contact-cell">
@@ -181,15 +204,14 @@ export function WorkProfilesPage() {
                         {profile.isActive ? "Ativo" : "Inativo"}
                       </span>
                     </td>
-                    <td>{formatDateTime(profile.updatedAt)}</td>
                     <td>
                       <AdminTableRowActions
-                        primary={{
-                          id: `${profile.id}_edit`,
-                          label: "Editar",
-                          href: `/administrative/work-profiles/${profile.id}/edit`
-                        }}
                         items={[
+                          {
+                            id: `${profile.id}_edit`,
+                            label: "Editar",
+                            href: `/administrative/work-profiles/${profile.id}/edit`
+                          },
                           {
                             id: `${profile.id}_view`,
                             label: "Visualizar",
@@ -215,15 +237,50 @@ export function WorkProfilesPage() {
             </table>
 
             {filteredProfiles.length === 0 ? (
-              <div className="empty-state">
-                <strong>Nenhum perfil encontrado.</strong>
-                <p>Crie um perfil para centralizar cargo, jornada, remuneracao, hora extra e beneficios.</p>
-                <Link href="/administrative/work-profiles/new" className="button-link">
-                  Criar perfil
-                </Link>
+              <div className="administrative-list-empty-state">
+                {hasActiveFilters ? (
+                  <>
+                    <strong>Nenhum perfil corresponde aos filtros aplicados.</strong>
+                    <p>Ajuste a busca ou limpe os filtros para visualizar os perfis de trabalho.</p>
+                    <div className="administrative-list-empty-state-actions">
+                      <button
+                        type="button"
+                        className="button-link secondary-link"
+                        onClick={() => {
+                          setSearchTerm("");
+                          setStatusFilter("ALL");
+                          setPage(1);
+                        }}
+                      >
+                        Limpar filtros
+                      </button>
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    <strong>Nenhum perfil encontrado.</strong>
+                    <p>Crie um perfil para centralizar cargo, jornada, remuneracao, hora extra e beneficios.</p>
+                    <div className="administrative-list-empty-state-actions">
+                      <Link href="/administrative/work-profiles/new" className="button-link">
+                        Criar perfil
+                      </Link>
+                    </div>
+                  </>
+                )}
               </div>
             ) : null}
           </div>
+          <AdministrativeListPagination
+            page={page}
+            pageSize={pageSize}
+            totalItems={filteredProfiles.length}
+            label="Paginacao da tabela de perfis de trabalho"
+            onPageChange={setPage}
+            onPageSizeChange={(value) => {
+              setPageSize(value);
+              setPage(1);
+            }}
+          />
         </article>
       </section>
     </main>
